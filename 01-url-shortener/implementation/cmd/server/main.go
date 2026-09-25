@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/config"
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/handler"
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/repository"
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,12 +39,19 @@ func main() {
 
 	log.Println("connected to PostgreSQL")
 
+	urlRepository := repository.NewPostgresURLRepository(pool)
+	urlService := service.NewURLService(urlRepository)
+	urlHandler := handler.NewURLHandler(urlService)
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	mux.HandleFunc("POST /v1/urls", urlHandler.CreateURL)
+	mux.HandleFunc("GET /{code}", urlHandler.Redirect)
 
 	server := &http.Server{
 		Addr:    ":8080",
