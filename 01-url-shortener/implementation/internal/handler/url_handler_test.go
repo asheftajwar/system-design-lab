@@ -347,3 +347,45 @@ func TestURLHandlerRedirectNotFound(t *testing.T) {
 		)
 	}
 }
+
+func TestURLHandlerCreateURLDuplicateAlias(t *testing.T) {
+	repo := &fakeURLRepository{
+		createFunc: func(ctx context.Context, url *domain.URL) error {
+			return repository.ErrDuplicateAlias
+		},
+	}
+
+	svc := service.NewURLService(repo)
+	handler := NewURLHandler(svc)
+
+	body := `{
+		"url": "https://example.com/docs",
+		"custom_alias": "docs"
+	}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/urls",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+
+	handler.CreateURL(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf(
+			"CreateURL() status = %d, want %d",
+			rec.Code,
+			http.StatusConflict,
+		)
+	}
+
+	if !strings.Contains(rec.Body.String(), "custom alias already exists") {
+		t.Fatalf(
+			"expected duplicate alias error, got %q",
+			rec.Body.String(),
+		)
+	}
+}

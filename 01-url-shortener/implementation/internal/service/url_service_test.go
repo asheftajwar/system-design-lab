@@ -826,3 +826,31 @@ func TestURLServiceResolveURLCorruptCacheFallsBackToRepository(t *testing.T) {
 		t.Fatal("expected corrupt cache entry to be deleted")
 	}
 }
+
+func TestURLServiceCreateURLDuplicateAlias(t *testing.T) {
+	repo := &fakeURLRepository{
+		createFunc: func(ctx context.Context, url *domain.URL) error {
+			return repository.ErrDuplicateAlias
+		},
+	}
+
+	svc := NewURLService(repo)
+
+	alias := "docs"
+
+	_, err := svc.CreateURL(
+		context.Background(),
+		CreateURLInput{
+			OriginalURL: "https://example.com/docs",
+			CustomAlias: &alias,
+		},
+	)
+
+	if !errors.Is(err, repository.ErrDuplicateAlias) {
+		t.Fatalf(
+			"CreateURL() error = %v, want %v",
+			err,
+			repository.ErrDuplicateAlias,
+		)
+	}
+}

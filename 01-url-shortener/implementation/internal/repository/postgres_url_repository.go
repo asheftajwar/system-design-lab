@@ -6,10 +6,14 @@ import (
 
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrNotFound = errors.New("url not found")
+var (
+	ErrNotFound       = errors.New("url not found")
+	ErrDuplicateAlias = errors.New("custom alias already exists")
+)
 
 type PostgresURLRepository struct {
 	pool *pgxpool.Pool
@@ -35,7 +39,7 @@ func (r *PostgresURLRepository) Create(
 		RETURNING id, created_at
 	`
 
-	return r.pool.QueryRow(
+	err := r.pool.QueryRow(
 		ctx,
 		query,
 		url.OriginalURL,
@@ -45,6 +49,18 @@ func (r *PostgresURLRepository) Create(
 		&url.ID,
 		&url.CreatedAt,
 	)
+
+	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrDuplicateAlias
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 func (r *PostgresURLRepository) GetByID(

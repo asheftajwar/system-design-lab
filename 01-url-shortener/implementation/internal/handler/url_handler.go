@@ -51,6 +51,8 @@ func (h *URLHandler) CreateURL(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, service.ErrInvalidAlias),
 			errors.Is(err, service.ErrExpirationPast):
 			writeJSONError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, repository.ErrDuplicateAlias):
+			writeJSONError(w, http.StatusConflict, "custom alias already exists")
 		default:
 			writeJSONError(w, http.StatusInternalServerError, "internal server error")
 		}
