@@ -1,6 +1,9 @@
 package base62
 
-import "errors"
+import (
+    "errors"
+    "math"
+)
 
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
@@ -28,30 +31,36 @@ func Encode(n int64) string {
 }
 
 func Decode(code string) (int64, error) {
-	if code == "" {
-		return 0, ErrInvalidCode
-	}
+    if code == "" {
+        return 0, ErrInvalidCode
+    }
 
-	var result int64
+    var result int64
 
-	for _, char := range code {
-		value := int64(-1)
+    for _, char := range code {
+        value := int64(-1)
 
-		switch {
-		case char >= '0' && char <= '9':
-			value = int64(char - '0')
-		case char >= 'A' && char <= 'Z':
-			value = int64(char-'A') + 10
-		case char >= 'a' && char <= 'z':
-			value = int64(char-'a') + 36
-		}
+        switch {
+        case char >= '0' && char <= '9':
+            value = int64(char - '0')
+        case char >= 'A' && char <= 'Z':
+            value = int64(char-'A') + 10
+        case char >= 'a' && char <= 'z':
+            value = int64(char-'a') + 36
+        }
 
-		if value < 0 {
-			return 0, ErrInvalidCode
-		}
+        if value < 0 {
+            return 0, ErrInvalidCode
+        }
 
-		result = result*62 + value
-	}
+        // Prevent int64 overflow before:
+        // result = result*62 + value
+        if result > (math.MaxInt64-value)/62 {
+            return 0, ErrInvalidCode
+        }
 
-	return result, nil
+        result = result*62 + value
+    }
+
+    return result, nil
 }

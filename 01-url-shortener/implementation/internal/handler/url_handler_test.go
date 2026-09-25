@@ -389,3 +389,37 @@ func TestURLHandlerCreateURLDuplicateAlias(t *testing.T) {
 		)
 	}
 }
+
+func TestURLHandlerRedirectOverflowCode(t *testing.T) {
+	repo := &fakeURLRepository{
+		getByAliasFunc: func(ctx context.Context, alias string) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(ctx context.Context, id int64) (*domain.URL, error) {
+			t.Fatal("GetByID should not be called for an overflowing Base62 code")
+			return nil, nil
+		},
+	}
+
+	svc := service.NewURLService(repo)
+	h := NewURLHandler(svc)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/AzL8n0Y58m8",
+		nil,
+	)
+	req.SetPathValue("code", "AzL8n0Y58m8")
+
+	rec := httptest.NewRecorder()
+
+	h.Redirect(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf(
+			"Redirect() status = %d, want %d",
+			rec.Code,
+			http.StatusNotFound,
+		)
+	}
+}

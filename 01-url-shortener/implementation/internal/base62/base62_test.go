@@ -1,6 +1,9 @@
 package base62
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestEncode(t *testing.T) {
 	tests := []struct {
@@ -151,5 +154,12 @@ func TestDecodeInvalidCode(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestDecodeOverflow(t *testing.T) {
+	_, err := Decode("AzL8n0Y58m8")
+	if !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("Decode() error = %v, want %v", err, ErrInvalidCode)
 	}
 }

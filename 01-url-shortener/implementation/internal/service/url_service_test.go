@@ -854,3 +854,36 @@ func TestURLServiceCreateURLDuplicateAlias(t *testing.T) {
 		)
 	}
 }
+
+func TestURLServiceResolveURLOverflowCode(t *testing.T) {
+	repositoryCalled := false
+
+	repo := &fakeURLRepository{
+		getByAliasFunc: func(ctx context.Context, alias string) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(ctx context.Context, id int64) (*domain.URL, error) {
+			repositoryCalled = true
+			return nil, repository.ErrNotFound
+		},
+	}
+
+	svc := NewURLService(repo)
+
+	_, err := svc.ResolveURL(
+		context.Background(),
+		"AzL8n0Y58m8",
+	)
+
+	if !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf(
+			"ResolveURL() error = %v, want %v",
+			err,
+			repository.ErrNotFound,
+		)
+	}
+
+	if repositoryCalled {
+		t.Fatal("expected repository GetByID not to be called for an overflowing Base62 code")
+	}
+}
