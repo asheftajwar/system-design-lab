@@ -23,10 +23,12 @@ var (
 type URLService struct {
 	repository repository.URLRepository
 	cache      cache.Cache
+	baseURL    string
 }
 
 func NewURLService(
 	repo repository.URLRepository,
+	baseURL string,
 	caches ...cache.Cache,
 ) *URLService {
 	var urlCache cache.Cache
@@ -38,6 +40,7 @@ func NewURLService(
 	return &URLService{
 		repository: repo,
 		cache:      urlCache,
+		baseURL:    strings.TrimRight(baseURL, "/"),
 	}
 }
 
@@ -91,7 +94,7 @@ func (s *URLService) CreateURL(
 
 	return &CreateURLOutput{
 		Code:      code,
-		ShortURL:  "https://sho.rt/" + code,
+		ShortURL:  s.baseURL + "/" + code,
 		ExpiresAt: entity.ExpiresAt,
 	}, nil
 }

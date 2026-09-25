@@ -52,7 +52,7 @@ func main() {
 	}
 
 	log.Println("connected to Redis")
-	urlService := service.NewURLService(urlRepository, urlCache)
+	urlService := service.NewURLService(urlRepository, cfg.BaseURL, urlCache)
 	urlHandler := handler.NewURLHandler(urlService)
 
 	mux := http.NewServeMux()

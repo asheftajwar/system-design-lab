@@ -67,7 +67,7 @@ func TestURLHandlerCreateURL(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	body := `{
@@ -94,7 +94,7 @@ func TestURLHandlerCreateURL(t *testing.T) {
 		)
 	}
 
-	expected := `{"code":"5BAN","short_url":"https://sho.rt/5BAN","expires_at":null}`
+	expected := `{"code":"5BAN","short_url":"http://localhost:8080/5BAN","expires_at":null}`
 
 	if strings.TrimSpace(recorder.Body.String()) != expected {
 		t.Fatalf(
@@ -114,7 +114,7 @@ func TestURLHandlerRejectsInvalidJSON(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	req := httptest.NewRequest(
@@ -145,7 +145,7 @@ func TestURLHandlerRejectsInvalidURL(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	body := `{
@@ -180,7 +180,7 @@ func TestURLHandlerPropagatesInternalError(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	body := `{
@@ -231,7 +231,7 @@ func TestURLHandlerRedirect(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	req := httptest.NewRequest(
@@ -284,7 +284,7 @@ func TestURLHandlerRedirectExpired(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	req := httptest.NewRequest(
@@ -324,7 +324,7 @@ func TestURLHandlerRedirectNotFound(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	req := httptest.NewRequest(
@@ -355,7 +355,7 @@ func TestURLHandlerCreateURLDuplicateAlias(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	handler := NewURLHandler(svc)
 
 	body := `{
@@ -401,7 +401,7 @@ func TestURLHandlerRedirectOverflowCode(t *testing.T) {
 		},
 	}
 
-	svc := service.NewURLService(repo)
+	svc := service.NewURLService(repo, "http://localhost:8080")
 	h := NewURLHandler(svc)
 
 	req := httptest.NewRequest(

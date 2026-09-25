@@ -5,6 +5,7 @@ import "os"
 type Config struct {
 	DatabaseURL string
 	RedisURL    string
+	BaseURL     string
 }
 
 func Load() Config {
@@ -16,6 +17,10 @@ func Load() Config {
 		RedisURL: getEnv(
 			"REDIS_URL",
 			"redis://localhost:6379",
+		),
+		BaseURL: getEnv(
+			"BASE_URL",
+			"http://localhost:8080",
 		),
 	}
 }

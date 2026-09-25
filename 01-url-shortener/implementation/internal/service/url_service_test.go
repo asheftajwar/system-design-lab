@@ -132,7 +132,7 @@ func TestURLServiceCreateURL(t *testing.T) {
 		},
 	}
 
-	service := NewURLService(repo)
+	service := NewURLService(repo, "http://localhost:8080")
 
 	result, err := service.CreateURL(
 		context.Background(),
@@ -149,9 +149,9 @@ func TestURLServiceCreateURL(t *testing.T) {
 		t.Fatalf("expected code 5BAN, got %q", result.Code)
 	}
 
-	if result.ShortURL != "https://sho.rt/5BAN" {
+	if result.ShortURL != "http://localhost:8080/5BAN" {
 		t.Fatalf(
-			"expected short URL https://sho.rt/5BAN, got %q",
+			"expected short URL http://localhost:8080/5BAN, got %q",
 			result.ShortURL,
 		)
 	}
@@ -170,7 +170,7 @@ func TestURLServiceCreateURLWithCustomAlias(t *testing.T) {
 		},
 	}
 
-	service := NewURLService(repo)
+	service := NewURLService(repo, "http://localhost:8080")
 
 	alias := "docs"
 
@@ -190,9 +190,9 @@ func TestURLServiceCreateURLWithCustomAlias(t *testing.T) {
 		t.Fatalf("expected code docs, got %q", result.Code)
 	}
 
-	if result.ShortURL != "https://sho.rt/docs" {
+	if result.ShortURL != "http://localhost:8080/docs" {
 		t.Fatalf(
-			"expected short URL https://sho.rt/docs, got %q",
+			"expected short URL http://localhost:8080/docs, got %q",
 			result.ShortURL,
 		)
 	}
@@ -207,7 +207,7 @@ func TestURLServiceCreateURLWithExpiration(t *testing.T) {
 		},
 	}
 
-	service := NewURLService(repo)
+	service := NewURLService(repo, "http://localhost:8080")
 
 	expiresAt := time.Now().Add(time.Hour)
 
@@ -237,7 +237,7 @@ func TestURLServiceCreateURLWithExpiration(t *testing.T) {
 }
 
 func TestURLServiceRejectsInvalidURL(t *testing.T) {
-	service := NewURLService(&fakeURLRepository{})
+	service := NewURLService(&fakeURLRepository{}, "http://localhost:8080")
 
 	tests := []struct {
 		name string
@@ -281,7 +281,7 @@ func TestURLServiceRejectsInvalidURL(t *testing.T) {
 }
 
 func TestURLServiceRejectsPastExpiration(t *testing.T) {
-	service := NewURLService(&fakeURLRepository{})
+	service := NewURLService(&fakeURLRepository{}, "http://localhost:8080")
 
 	expiresAt := time.Now().Add(-time.Hour)
 
@@ -302,7 +302,7 @@ func TestURLServiceRejectsPastExpiration(t *testing.T) {
 }
 
 func TestURLServiceRejectsInvalidAlias(t *testing.T) {
-	service := NewURLService(&fakeURLRepository{})
+	service := NewURLService(&fakeURLRepository{}, "http://localhost:8080")
 
 	tests := []struct {
 		name  string
@@ -357,7 +357,7 @@ func TestURLServicePropagatesRepositoryError(t *testing.T) {
 		},
 	}
 
-	service := NewURLService(repo)
+	service := NewURLService(repo, "http://localhost:8080")
 
 	_, err := service.CreateURL(
 		context.Background(),
@@ -399,7 +399,7 @@ func TestURLServiceResolveURLByGeneratedCode(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo)
+	svc := NewURLService(repo, "http://localhost:8080")
 
 	result, err := svc.ResolveURL(
 		context.Background(),
@@ -437,7 +437,7 @@ func TestURLServiceResolveURLByCustomAlias(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo)
+	svc := NewURLService(repo, "http://localhost:8080")
 
 	result, err := svc.ResolveURL(
 		context.Background(),
@@ -474,7 +474,7 @@ func TestURLServiceResolveURLExpired(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo)
+	svc := NewURLService(repo, "http://localhost:8080")
 
 	_, err := svc.ResolveURL(
 		context.Background(),
@@ -505,7 +505,7 @@ func TestURLServiceResolveURLNotFound(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo)
+	svc := NewURLService(repo, "http://localhost:8080")
 
 	_, err := svc.ResolveURL(
 		context.Background(),
@@ -553,7 +553,7 @@ func TestURLServiceResolveURLAliasTakesPrecedence(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo)
+	svc := NewURLService(repo, "http://localhost:8080")
 
 	result, err := svc.ResolveURL(
 		context.Background(),
@@ -594,7 +594,7 @@ func TestURLServiceResolveURLCacheHit(t *testing.T) {
 
 	urlCache.values["url:abc"] = value
 
-	svc := NewURLService(repo, urlCache)
+	svc := NewURLService(repo, "http://localhost:8080", urlCache)
 
 	result, err := svc.ResolveURL(context.Background(), "abc")
 	if err != nil {
@@ -637,7 +637,7 @@ func TestURLServiceResolveURLCacheMiss(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo, urlCache)
+	svc := NewURLService(repo, "http://localhost:8080", urlCache)
 
 	code := base62.Encode(123)
 
@@ -709,7 +709,7 @@ func TestURLServiceResolveURLExpiredCacheEntry(t *testing.T) {
 
 	repo := &fakeURLRepository{}
 
-	svc := NewURLService(repo, urlCache)
+	svc := NewURLService(repo, "http://localhost:8080", urlCache)
 
 	_, err = svc.ResolveURL(context.Background(), "expired")
 
@@ -751,7 +751,7 @@ func TestURLServiceResolveURLCacheFailureFallsBackToRepository(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo, urlCache)
+	svc := NewURLService(repo, "http://localhost:8080", urlCache)
 
 	code := base62.Encode(456)
 
@@ -802,7 +802,7 @@ func TestURLServiceResolveURLCorruptCacheFallsBackToRepository(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo, fakeCache)
+	svc := NewURLService(repo, "http://localhost:8080", fakeCache)
 
 	code := base62.Encode(1234567)
 
@@ -834,7 +834,7 @@ func TestURLServiceCreateURLDuplicateAlias(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo)
+	svc := NewURLService(repo, "http://localhost:8080")
 
 	alias := "docs"
 
@@ -868,7 +868,7 @@ func TestURLServiceResolveURLOverflowCode(t *testing.T) {
 		},
 	}
 
-	svc := NewURLService(repo)
+	svc := NewURLService(repo, "http://localhost:8080")
 
 	_, err := svc.ResolveURL(
 		context.Background(),
@@ -885,5 +885,67 @@ func TestURLServiceResolveURLOverflowCode(t *testing.T) {
 
 	if repositoryCalled {
 		t.Fatal("expected repository GetByID not to be called for an overflowing Base62 code")
+	}
+}
+
+func TestURLServiceCreateURLUsesConfiguredBaseURL(t *testing.T) {
+	repo := &fakeURLRepository{
+		createFunc: func(ctx context.Context, url *domain.URL) error {
+			url.ID = 1234567
+			url.CreatedAt = time.Now()
+			return nil
+		},
+	}
+
+	svc := NewURLService(repo, "https://short.example.com")
+
+	result, err := svc.CreateURL(
+		context.Background(),
+		CreateURLInput{
+			OriginalURL: "https://example.com",
+		},
+	)
+	if err != nil {
+		t.Fatalf("CreateURL() error = %v", err)
+	}
+
+	want := "https://short.example.com/5BAN"
+	if result.ShortURL != want {
+		t.Fatalf(
+			"CreateURL() ShortURL = %q, want %q",
+			result.ShortURL,
+			want,
+		)
+	}
+}
+
+func TestURLServiceCreateURLTrimsBaseURLTrailingSlash(t *testing.T) {
+	repo := &fakeURLRepository{
+		createFunc: func(ctx context.Context, url *domain.URL) error {
+			url.ID = 1234567
+			url.CreatedAt = time.Now()
+			return nil
+		},
+	}
+
+	svc := NewURLService(repo, "https://short.example.com/")
+
+	result, err := svc.CreateURL(
+		context.Background(),
+		CreateURLInput{
+			OriginalURL: "https://example.com",
+		},
+	)
+	if err != nil {
+		t.Fatalf("CreateURL() error = %v", err)
+	}
+
+	want := "https://short.example.com/5BAN"
+	if result.ShortURL != want {
+		t.Fatalf(
+			"CreateURL() ShortURL = %q, want %q",
+			result.ShortURL,
+			want,
+		)
 	}
 }
