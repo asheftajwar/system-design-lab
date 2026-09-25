@@ -4,6 +4,7 @@ import "os"
 
 type Config struct {
 	DatabaseURL string
+	RedisURL    string
 }
 
 func Load() Config {
@@ -11,6 +12,10 @@ func Load() Config {
 		DatabaseURL: getEnv(
 			"DATABASE_URL",
 			"postgres://shortener:shortener@localhost:5432/shortener",
+		),
+		RedisURL: getEnv(
+			"REDIS_URL",
+			"redis://localhost:6379",
 		),
 	}
 }
@@ -20,6 +25,5 @@ func getEnv(key, fallback string) string {
 	if value == "" {
 		return fallback
 	}
-
 	return value
 }

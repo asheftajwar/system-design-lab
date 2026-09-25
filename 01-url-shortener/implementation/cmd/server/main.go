@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/cache"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/config"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/handler"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/repository"
@@ -40,7 +41,18 @@ func main() {
 	log.Println("connected to PostgreSQL")
 
 	urlRepository := repository.NewPostgresURLRepository(pool)
-	urlService := service.NewURLService(urlRepository)
+	urlCache, err := cache.NewRedisCache(cfg.RedisURL, 24*time.Hour)
+	if err != nil {
+		log.Fatalf("failed to create Redis cache: %v", err)
+	}
+	defer urlCache.Close()
+
+	if err := urlCache.Ping(ctx); err != nil {
+		log.Fatalf("failed to ping Redis: %v", err)
+	}
+
+	log.Println("connected to Redis")
+	urlService := service.NewURLService(urlRepository, urlCache)
 	urlHandler := handler.NewURLHandler(urlService)
 
 	mux := http.NewServeMux()

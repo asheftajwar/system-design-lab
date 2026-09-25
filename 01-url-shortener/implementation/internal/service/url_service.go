@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/base62"
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/cache"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/domain"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/repository"
 )
@@ -21,11 +22,22 @@ var (
 
 type URLService struct {
 	repository repository.URLRepository
+	cache      cache.Cache
 }
 
-func NewURLService(repo repository.URLRepository) *URLService {
+func NewURLService(
+	repo repository.URLRepository,
+	caches ...cache.Cache,
+) *URLService {
+	var urlCache cache.Cache
+
+	if len(caches) > 0 {
+		urlCache = caches[0]
+	}
+
 	return &URLService{
 		repository: repo,
+		cache:      urlCache,
 	}
 }
 
@@ -151,12 +163,46 @@ func (s *URLService) ResolveURL(
 	ctx context.Context,
 	code string,
 ) (*ResolveURLOutput, error) {
-	// Custom aliases take precedence over generated Base62 codes.
+	cacheKey := "url:" + code
+
+	// 1. Try Redis first.
+	if s.cache != nil {
+		cachedValue, err := s.cache.Get(ctx, cacheKey)
+
+		if err == nil {
+			entry, decodeErr := cache.DecodeURL(cachedValue)
+
+			if decodeErr == nil {
+				// Business expiration is checked independently
+				// of Redis TTL.
+				if isExpired(entry.ExpiresAt) {
+					_ = s.cache.Delete(ctx, cacheKey)
+					return nil, ErrURLExpired
+				}
+
+				return &ResolveURLOutput{
+					OriginalURL: entry.OriginalURL,
+				}, nil
+			}
+
+			// Corrupt cache entry. Remove it and fall
+			// through to PostgreSQL.
+			_ = s.cache.Delete(ctx, cacheKey)
+		}
+
+		// Redis failure or cache miss should not break
+		// redirects. Fall through to PostgreSQL.
+	}
+
+	// 2. Try custom alias.
 	urlEntity, err := s.repository.GetByAlias(ctx, code)
+
 	if err == nil {
 		if isExpired(urlEntity.ExpiresAt) {
 			return nil, ErrURLExpired
 		}
+
+		s.cacheURL(ctx, cacheKey, urlEntity)
 
 		return &ResolveURLOutput{
 			OriginalURL: urlEntity.OriginalURL,
@@ -167,11 +213,13 @@ func (s *URLService) ResolveURL(
 		return nil, err
 	}
 
+	// 3. Decode generated Base62 code.
 	id, err := base62.Decode(code)
 	if err != nil {
 		return nil, repository.ErrNotFound
 	}
 
+	// 4. Look up generated URL by ID.
 	urlEntity, err = s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -181,9 +229,36 @@ func (s *URLService) ResolveURL(
 		return nil, ErrURLExpired
 	}
 
+	// 5. Populate Redis for future requests.
+	s.cacheURL(ctx, cacheKey, urlEntity)
+
 	return &ResolveURLOutput{
 		OriginalURL: urlEntity.OriginalURL,
 	}, nil
+}
+
+func (s *URLService) cacheURL(
+	ctx context.Context,
+	key string,
+	urlEntity *domain.URL,
+) {
+	if s.cache == nil {
+		return
+	}
+
+	entry := cache.URLCacheEntry{
+		OriginalURL: urlEntity.OriginalURL,
+		ExpiresAt:   urlEntity.ExpiresAt,
+	}
+
+	value, err := cache.EncodeURL(entry)
+	if err != nil {
+		return
+	}
+
+	// Cache failures are intentionally ignored.
+	// PostgreSQL remains the source of truth.
+	_ = s.cache.Set(ctx, key, value)
 }
 
 func isExpired(expiresAt *time.Time) bool {
