@@ -9,9 +9,12 @@ import (
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/cache"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/config"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/handler"
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/metrics"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/repository"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -52,8 +55,19 @@ func main() {
 	}
 
 	log.Println("connected to Redis")
-	urlService := service.NewURLService(urlRepository, cfg.BaseURL, urlCache)
+
+	appMetrics := metrics.New()
+
+	serviceMetrics := metrics.NewServiceMetrics(appMetrics)
+
+	registry := prometheus.NewRegistry()
+
+	urlService := service.NewURLService(urlRepository, cfg.BaseURL, urlCache).WithMetrics(serviceMetrics)
 	urlHandler := handler.NewURLHandler(urlService)
+
+	if err := appMetrics.Register(registry); err != nil {
+		log.Fatalf("failed to register metrics: %v", err)
+	}
 
 	mux := http.NewServeMux()
 
@@ -62,12 +76,16 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	mux.Handle("GET /metrics", promhttp.HandlerFor(
+		registry,
+		promhttp.HandlerOpts{},
+	))
 	mux.HandleFunc("POST /v1/urls", urlHandler.CreateURL)
 	mux.HandleFunc("GET /{code}", urlHandler.Redirect)
 
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: mux,
+		Handler: metrics.Middleware(appMetrics)(mux),
 	}
 
 	log.Printf("server listening on %s", server.Addr)

@@ -39,6 +39,10 @@ func (f *fakeCache) Delete(ctx context.Context, key string) error {
 		return f.deleteErr
 	}
 
+	if f.values != nil {
+		delete(f.values, key)
+	}
+
 	return nil
 }
 
@@ -947,5 +951,44 @@ func TestURLServiceCreateURLTrimsBaseURLTrailingSlash(t *testing.T) {
 			result.ShortURL,
 			want,
 		)
+	}
+}
+
+func TestURLServiceCreateURLInvalidatesAliasCache(t *testing.T) {
+	alias := "B"
+
+	repo := &fakeURLRepository{
+		createFunc: func(ctx context.Context, url *domain.URL) error {
+			url.ID = 999
+			url.CreatedAt = time.Now()
+			return nil
+		},
+	}
+
+	urlCache := &fakeCache{
+		values: map[string]string{
+			"url:B": `{"original_url":"https://example.com/generated"}`,
+		},
+	}
+
+	svc := NewURLService(
+		repo,
+		"http://localhost:8080",
+		urlCache,
+	)
+
+	_, err := svc.CreateURL(
+		context.Background(),
+		CreateURLInput{
+			OriginalURL: "https://example.com/custom",
+			CustomAlias: &alias,
+		},
+	)
+	if err != nil {
+		t.Fatalf("CreateURL() error = %v", err)
+	}
+
+	if _, exists := urlCache.values["url:B"]; exists {
+		t.Fatal("expected custom alias cache entry to be invalidated")
 	}
 }

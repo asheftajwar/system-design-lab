@@ -3,12 +3,15 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/repository"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/service"
 )
+
+const maxCreateURLBodySize = 16 << 10 // 16 KiB
 
 type URLHandler struct {
 	service *service.URLService
@@ -33,9 +36,18 @@ type createURLResponse struct {
 }
 
 func (h *URLHandler) CreateURL(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCreateURLBodySize)
+
+	decoder := json.NewDecoder(r.Body)
+
 	var req createURLRequest
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decoder.Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if decoder.Decode(&struct{}{}) != io.EOF {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
@@ -51,8 +63,10 @@ func (h *URLHandler) CreateURL(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, service.ErrInvalidAlias),
 			errors.Is(err, service.ErrExpirationPast):
 			writeJSONError(w, http.StatusBadRequest, err.Error())
+
 		case errors.Is(err, repository.ErrDuplicateAlias):
 			writeJSONError(w, http.StatusConflict, "custom alias already exists")
+
 		default:
 			writeJSONError(w, http.StatusInternalServerError, "internal server error")
 		}

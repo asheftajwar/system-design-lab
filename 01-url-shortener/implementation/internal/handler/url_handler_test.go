@@ -423,3 +423,97 @@ func TestURLHandlerRedirectOverflowCode(t *testing.T) {
 		)
 	}
 }
+
+func TestCreateURLMissingURL(t *testing.T) {
+	repo := &fakeURLRepository{
+		getByAliasFunc: func(ctx context.Context, alias string) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(ctx context.Context, id int64) (*domain.URL, error) {
+			t.Fatal("GetByID should not be called for an overflowing Base62 code")
+			return nil, nil
+		},
+	}
+    svc := service.NewURLService(repo, "http://localhost:8080")
+    handler := NewURLHandler(svc)
+
+    req := httptest.NewRequest(
+        http.MethodPost,
+        "/v1/urls",
+        strings.NewReader(`{}`),
+    )
+    req.Header.Set("Content-Type", "application/json")
+
+    recorder := httptest.NewRecorder()
+
+    handler.CreateURL(recorder, req)
+
+    if recorder.Code != http.StatusBadRequest {
+        t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+    }
+}
+
+func TestCreateURLRejectsTrailingJSON(t *testing.T) {
+	repo := &fakeURLRepository{
+		getByAliasFunc: func(ctx context.Context, alias string) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(ctx context.Context, id int64) (*domain.URL, error) {
+			t.Fatal("GetByID should not be called for an overflowing Base62 code")
+			return nil, nil
+		},
+	}
+    svc := service.NewURLService(repo, "http://localhost:8080")
+    handler := NewURLHandler(svc)
+
+    body := `{"url":"https://example.com"} {"extra":true}`
+
+    req := httptest.NewRequest(
+        http.MethodPost,
+        "/v1/urls",
+        strings.NewReader(body),
+    )
+    req.Header.Set("Content-Type", "application/json")
+
+    recorder := httptest.NewRecorder()
+
+    handler.CreateURL(recorder, req)
+
+    if recorder.Code != http.StatusBadRequest {
+        t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+    }
+}
+
+func TestCreateURLRejectsOversizedBody(t *testing.T) {
+	repo := &fakeURLRepository{
+		getByAliasFunc: func(ctx context.Context, alias string) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(ctx context.Context, id int64) (*domain.URL, error) {
+			t.Fatal("GetByID should not be called for an overflowing Base62 code")
+			return nil, nil
+		},
+	}
+
+    svc := service.NewURLService(repo, "http://localhost:8080")
+    handler := NewURLHandler(svc)
+
+    oversizedURL := "https://example.com/" + strings.Repeat("a", maxCreateURLBodySize)
+
+    body := `{"url":"` + oversizedURL + `"}`
+
+    req := httptest.NewRequest(
+        http.MethodPost,
+        "/v1/urls",
+        strings.NewReader(body),
+    )
+    req.Header.Set("Content-Type", "application/json")
+
+    recorder := httptest.NewRecorder()
+
+    handler.CreateURL(recorder, req)
+
+    if recorder.Code != http.StatusBadRequest {
+        t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+    }
+}

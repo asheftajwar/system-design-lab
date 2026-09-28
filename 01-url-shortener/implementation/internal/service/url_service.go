@@ -20,10 +20,13 @@ var (
 	ErrURLExpired     = errors.New("url expired")
 )
 
+const maxURLLength = 2048
+
 type URLService struct {
 	repository repository.URLRepository
 	cache      cache.Cache
 	baseURL    string
+	metrics    Metrics
 }
 
 func NewURLService(
@@ -42,6 +45,11 @@ func NewURLService(
 		cache:      urlCache,
 		baseURL:    strings.TrimRight(baseURL, "/"),
 	}
+}
+
+func (s *URLService) WithMetrics(m Metrics) *URLService {
+	s.metrics = m
+	return s
 }
 
 type CreateURLInput struct {
@@ -86,6 +94,16 @@ func (s *URLService) CreateURL(
 		return nil, err
 	}
 
+	// A custom alias may collide with a previously cached generated
+	// code. Custom aliases take precedence, so invalidate that key.
+	if entity.CustomAlias != nil && s.cache != nil {
+		_ = s.cache.Delete(ctx, "url:"+*entity.CustomAlias)
+	}
+
+	if s.metrics != nil {
+		s.metrics.Creation()
+	}
+
 	code := base62.Encode(entity.ID)
 
 	if entity.CustomAlias != nil {
@@ -102,7 +120,7 @@ func (s *URLService) CreateURL(
 func validateURL(rawURL string) error {
 	rawURL = strings.TrimSpace(rawURL)
 
-	if rawURL == "" {
+	if rawURL == "" || len(rawURL) > maxURLLength {
 		return ErrInvalidURL
 	}
 
@@ -176,6 +194,10 @@ func (s *URLService) ResolveURL(
 			entry, decodeErr := cache.DecodeURL(cachedValue)
 
 			if decodeErr == nil {
+				if s.metrics != nil {
+					s.metrics.CacheHit()
+				}
+
 				// Business expiration is checked independently
 				// of Redis TTL.
 				if isExpired(entry.ExpiresAt) {
@@ -183,21 +205,41 @@ func (s *URLService) ResolveURL(
 					return nil, ErrURLExpired
 				}
 
+				if s.metrics != nil {
+					s.metrics.Redirect()
+				}
+
 				return &ResolveURLOutput{
 					OriginalURL: entry.OriginalURL,
 				}, nil
 			}
 
-			// Corrupt cache entry. Remove it and fall
-			// through to PostgreSQL.
+			// Corrupt cache entry. Remove it and fall through
+			// to PostgreSQL.
 			_ = s.cache.Delete(ctx, cacheKey)
-		}
 
-		// Redis failure or cache miss should not break
-		// redirects. Fall through to PostgreSQL.
+			if s.metrics != nil {
+				s.metrics.CacheError()
+			}
+		} else {
+			// Distinguish a normal cache miss from a Redis error.
+			if errors.Is(err, cache.ErrNotFound) {
+				if s.metrics != nil {
+					s.metrics.CacheMiss()
+				}
+			} else {
+				if s.metrics != nil {
+					s.metrics.CacheError()
+				}
+			}
+		}
 	}
 
 	// 2. Try custom alias.
+	if s.metrics != nil {
+		s.metrics.DBLookup()
+	}
+
 	urlEntity, err := s.repository.GetByAlias(ctx, code)
 
 	if err == nil {
@@ -206,6 +248,10 @@ func (s *URLService) ResolveURL(
 		}
 
 		s.cacheURL(ctx, cacheKey, urlEntity)
+
+		if s.metrics != nil {
+			s.metrics.Redirect()
+		}
 
 		return &ResolveURLOutput{
 			OriginalURL: urlEntity.OriginalURL,
@@ -223,6 +269,10 @@ func (s *URLService) ResolveURL(
 	}
 
 	// 4. Look up generated URL by ID.
+	if s.metrics != nil {
+		s.metrics.DBLookup()
+	}
+
 	urlEntity, err = s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -234,6 +284,10 @@ func (s *URLService) ResolveURL(
 
 	// 5. Populate Redis for future requests.
 	s.cacheURL(ctx, cacheKey, urlEntity)
+
+	if s.metrics != nil {
+		s.metrics.Redirect()
+	}
 
 	return &ResolveURLOutput{
 		OriginalURL: urlEntity.OriginalURL,
@@ -256,12 +310,19 @@ func (s *URLService) cacheURL(
 
 	value, err := cache.EncodeURL(entry)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.CacheError()
+		}
 		return
 	}
 
 	// Cache failures are intentionally ignored.
 	// PostgreSQL remains the source of truth.
-	_ = s.cache.Set(ctx, key, value)
+	if err := s.cache.Set(ctx, key, value); err != nil {
+		if s.metrics != nil {
+			s.metrics.CacheError()
+		}
+	}
 }
 
 func isExpired(expiresAt *time.Time) bool {
