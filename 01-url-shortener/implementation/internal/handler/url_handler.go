@@ -35,6 +35,15 @@ type createURLResponse struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
+type urlMetadataResponse struct {
+	Code           string     `json:"code"`
+	OriginalURL    string     `json:"original_url"`
+	CreatedAt      time.Time  `json:"created_at"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	RedirectCount  int64      `json:"redirect_count"`
+	LastAccessedAt *time.Time `json:"last_accessed_at"`
+}
+
 func (h *URLHandler) CreateURL(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCreateURLBodySize)
 
@@ -130,4 +139,41 @@ func (h *URLHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 		result.OriginalURL,
 		http.StatusFound,
 	)
+}
+
+func (h *URLHandler) GetMetadata(w http.ResponseWriter, r *http.Request) {
+	code := r.PathValue("code")
+
+	if code == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	result, err := h.service.GetURLMetadata(r.Context(), code)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			http.NotFound(w, r)
+
+		default:
+			writeJSONError(
+				w,
+				http.StatusInternalServerError,
+				"internal server error",
+			)
+		}
+
+		return
+	}
+
+	response := urlMetadataResponse{
+		Code:           result.Code,
+		OriginalURL:    result.OriginalURL,
+		CreatedAt:      result.CreatedAt,
+		ExpiresAt:      result.ExpiresAt,
+		RedirectCount:  result.RedirectCount,
+		LastAccessedAt: result.LastAccessedAt,
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }

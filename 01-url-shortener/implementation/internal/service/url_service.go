@@ -24,15 +24,23 @@ var (
 const maxURLLength = 2048
 
 type URLService struct {
-	repository repository.URLRepository
-	cache      cache.Cache
-	analytics  analyticsEmitter
-	baseURL    string
-	metrics    Metrics
+	repository        repository.URLRepository
+	analyticsRepo     repository.AnalyticsRepository
+	cache             cache.Cache
+	analytics         analyticsEmitter
+	baseURL           string
+	metrics           Metrics
 }
 
 type analyticsEmitter interface {
 	Emit(event analytics.RedirectEvent) bool
+}
+
+func (s *URLService) WithAnalyticsRepository(
+	repo repository.AnalyticsRepository,
+) *URLService {
+	s.analyticsRepo = repo
+	return s
 }
 
 func NewURLService(
@@ -77,6 +85,15 @@ type CreateURLOutput struct {
 
 type ResolveURLOutput struct {
 	OriginalURL string
+}
+
+type URLMetadataOutput struct {
+	Code           string
+	OriginalURL    string
+	CreatedAt      time.Time
+	ExpiresAt      *time.Time
+	RedirectCount  int64
+	LastAccessedAt *time.Time
 }
 
 func (s *URLService) CreateURL(
@@ -216,7 +233,6 @@ func (s *URLService) ResolveURL(
 					return nil, ErrURLExpired
 				}
 
-				s.recordRedirectAnalytics(code)
 				s.recordRedirectAnalyticsEntity(entry.URLID)
 
 				if s.metrics != nil {
@@ -310,17 +326,57 @@ func (s *URLService) ResolveURL(
 	}, nil
 }
 
-func (s *URLService) recordRedirectAnalytics(code string) {
-	if s.analytics == nil {
-		return
+func (s *URLService) GetURLMetadata(
+	ctx context.Context,
+	code string,
+) (*URLMetadataOutput, error) {
+	// 1. Try custom alias first.
+	urlEntity, err := s.repository.GetByAlias(ctx, code)
+
+	if errors.Is(err, repository.ErrNotFound) {
+		// 2. Not an alias. Try generated Base62 code.
+		id, decodeErr := base62.Decode(code)
+		if decodeErr != nil {
+			return nil, repository.ErrNotFound
+		}
+
+		urlEntity, err = s.repository.GetByID(ctx, id)
 	}
 
-	// Cache hits don't currently carry the database URL ID.
-	// Analytics therefore cannot be recorded correctly from a cache-only
-	// entry until the cache payload includes URLID.
-	//
-	// This path is intentionally left without an event for now.
-	_ = code
+	if err != nil {
+		return nil, err
+	}
+
+	output := &URLMetadataOutput{
+		Code:           code,
+		OriginalURL:    urlEntity.OriginalURL,
+		CreatedAt:      urlEntity.CreatedAt,
+		ExpiresAt:      urlEntity.ExpiresAt,
+		RedirectCount:  0,
+		LastAccessedAt: nil,
+	}
+
+	if s.analyticsRepo == nil {
+		return output, nil
+	}
+
+	analyticsData, err := s.analyticsRepo.GetAnalytics(
+		ctx,
+		urlEntity.ID,
+	)
+
+	if errors.Is(err, repository.ErrNotFound) {
+		return output, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	output.RedirectCount = analyticsData.RedirectCount
+	output.LastAccessedAt = analyticsData.LastAccessedAt
+
+	return output, nil
 }
 
 func (s *URLService) recordRedirectAnalyticsEntity(urlID int64) {

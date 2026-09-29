@@ -96,7 +96,8 @@ func main() {
 		urlCache,
 	).
 		WithMetrics(serviceMetrics).
-		WithAnalytics(analyticsWorker)
+		WithAnalytics(analyticsWorker).
+		WithAnalyticsRepository(analyticsRepository)
 
 	urlHandler := handler.NewURLHandler(urlService)
 
@@ -114,6 +115,7 @@ func main() {
 
 	mux.HandleFunc("POST /v1/urls", urlHandler.CreateURL)
 	mux.HandleFunc("GET /{code}", urlHandler.Redirect)
+	mux.HandleFunc("GET /v1/urls/{code}", urlHandler.GetMetadata)
 
 	server := &http.Server{
 		Addr:    ":8080",

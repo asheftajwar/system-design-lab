@@ -2,9 +2,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,42 @@ type fakeURLRepository struct {
 		ctx context.Context,
 		alias string,
 	) (*domain.URL, error)
+}
+
+type fakeAnalyticsRepository struct {
+	getAnalyticsFunc func(
+		ctx context.Context,
+		urlID int64,
+	) (*repository.URLAnalytics, error)
+
+	recordRedirectFunc func(
+		ctx context.Context,
+		urlID int64,
+		accessedAt time.Time,
+	) error
+}
+
+func (f *fakeAnalyticsRepository) RecordRedirect(
+	ctx context.Context,
+	urlID int64,
+	accessedAt time.Time,
+) error {
+	if f.recordRedirectFunc != nil {
+		return f.recordRedirectFunc(ctx, urlID, accessedAt)
+	}
+
+	return nil
+}
+
+func (f *fakeAnalyticsRepository) GetAnalytics(
+	ctx context.Context,
+	urlID int64,
+) (*repository.URLAnalytics, error) {
+	if f.getAnalyticsFunc != nil {
+		return f.getAnalyticsFunc(ctx, urlID)
+	}
+
+	return nil, repository.ErrNotFound
 }
 
 func (f *fakeURLRepository) Create(
@@ -434,23 +472,23 @@ func TestCreateURLMissingURL(t *testing.T) {
 			return nil, nil
 		},
 	}
-    svc := service.NewURLService(repo, "http://localhost:8080")
-    handler := NewURLHandler(svc)
+	svc := service.NewURLService(repo, "http://localhost:8080")
+	handler := NewURLHandler(svc)
 
-    req := httptest.NewRequest(
-        http.MethodPost,
-        "/v1/urls",
-        strings.NewReader(`{}`),
-    )
-    req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/urls",
+		strings.NewReader(`{}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
 
-    recorder := httptest.NewRecorder()
+	recorder := httptest.NewRecorder()
 
-    handler.CreateURL(recorder, req)
+	handler.CreateURL(recorder, req)
 
-    if recorder.Code != http.StatusBadRequest {
-        t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
-    }
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
 }
 
 func TestCreateURLRejectsTrailingJSON(t *testing.T) {
@@ -463,25 +501,25 @@ func TestCreateURLRejectsTrailingJSON(t *testing.T) {
 			return nil, nil
 		},
 	}
-    svc := service.NewURLService(repo, "http://localhost:8080")
-    handler := NewURLHandler(svc)
+	svc := service.NewURLService(repo, "http://localhost:8080")
+	handler := NewURLHandler(svc)
 
-    body := `{"url":"https://example.com"} {"extra":true}`
+	body := `{"url":"https://example.com"} {"extra":true}`
 
-    req := httptest.NewRequest(
-        http.MethodPost,
-        "/v1/urls",
-        strings.NewReader(body),
-    )
-    req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/urls",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
 
-    recorder := httptest.NewRecorder()
+	recorder := httptest.NewRecorder()
 
-    handler.CreateURL(recorder, req)
+	handler.CreateURL(recorder, req)
 
-    if recorder.Code != http.StatusBadRequest {
-        t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
-    }
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
 }
 
 func TestCreateURLRejectsOversizedBody(t *testing.T) {
@@ -495,25 +533,314 @@ func TestCreateURLRejectsOversizedBody(t *testing.T) {
 		},
 	}
 
-    svc := service.NewURLService(repo, "http://localhost:8080")
-    handler := NewURLHandler(svc)
+	svc := service.NewURLService(repo, "http://localhost:8080")
+	handler := NewURLHandler(svc)
 
-    oversizedURL := "https://example.com/" + strings.Repeat("a", maxCreateURLBodySize)
+	oversizedURL := "https://example.com/" + strings.Repeat("a", maxCreateURLBodySize)
 
-    body := `{"url":"` + oversizedURL + `"}`
+	body := `{"url":"` + oversizedURL + `"}`
 
-    req := httptest.NewRequest(
-        http.MethodPost,
-        "/v1/urls",
-        strings.NewReader(body),
-    )
-    req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/urls",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
 
-    recorder := httptest.NewRecorder()
+	recorder := httptest.NewRecorder()
 
-    handler.CreateURL(recorder, req)
+	handler.CreateURL(recorder, req)
 
-    if recorder.Code != http.StatusBadRequest {
-        t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
-    }
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
+func TestURLHandlerGetMetadata(t *testing.T) {
+	createdAt := time.Date(
+		2026, 9, 29, 12, 0, 0, 0,
+		time.UTC,
+	)
+
+	lastAccessedAt := time.Date(
+		2026, 9, 29, 13, 30, 0, 0,
+		time.UTC,
+	)
+
+	alias := "docs"
+
+	urlRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			value string,
+		) (*domain.URL, error) {
+			if value != alias {
+				t.Fatalf(
+					"expected alias %q, got %q",
+					alias,
+					value,
+				)
+			}
+
+			return &domain.URL{
+				ID:          123,
+				OriginalURL: "https://example.com/docs",
+				CustomAlias: &alias,
+				CreatedAt:   createdAt,
+				ExpiresAt:   nil,
+			}, nil
+		},
+	}
+
+	analyticsRepo := &fakeAnalyticsRepository{
+		getAnalyticsFunc: func(
+			ctx context.Context,
+			urlID int64,
+		) (*repository.URLAnalytics, error) {
+			if urlID != 123 {
+				t.Fatalf(
+					"expected URL ID 123, got %d",
+					urlID,
+				)
+			}
+
+			return &repository.URLAnalytics{
+				URLID:          123,
+				RedirectCount:  7,
+				LastAccessedAt: &lastAccessedAt,
+			}, nil
+		},
+	}
+
+	svc := service.NewURLService(
+		urlRepo,
+		"http://localhost:8080",
+	).WithAnalyticsRepository(analyticsRepo)
+
+	handler := NewURLHandler(svc)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/urls/docs",
+		nil,
+	)
+
+	req.SetPathValue("code", "docs")
+
+	recorder := httptest.NewRecorder()
+
+	handler.GetMetadata(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			recorder.Code,
+		)
+	}
+
+	expected := `{
+		"code":"docs",
+		"original_url":"https://example.com/docs",
+		"created_at":"2026-09-29T12:00:00Z",
+		"expires_at":null,
+		"redirect_count":7,
+		"last_accessed_at":"2026-09-29T13:30:00Z"
+	}`
+
+	assertJSONEqual(t, expected, recorder.Body.String())
+}
+
+func TestURLHandlerGetMetadataWithoutAnalytics(t *testing.T) {
+	createdAt := time.Date(
+		2026, 9, 29, 12, 0, 0, 0,
+		time.UTC,
+	)
+
+	alias := "new-url"
+
+	urlRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			value string,
+		) (*domain.URL, error) {
+			return &domain.URL{
+				ID:          456,
+				OriginalURL: "https://example.com/new",
+				CustomAlias: &alias,
+				CreatedAt:   createdAt,
+			}, nil
+		},
+	}
+
+	analyticsRepo := &fakeAnalyticsRepository{
+		getAnalyticsFunc: func(
+			ctx context.Context,
+			urlID int64,
+		) (*repository.URLAnalytics, error) {
+			return nil, repository.ErrNotFound
+		},
+	}
+
+	svc := service.NewURLService(
+		urlRepo,
+		"http://localhost:8080",
+	).WithAnalyticsRepository(analyticsRepo)
+
+	handler := NewURLHandler(svc)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/urls/new-url",
+		nil,
+	)
+
+	req.SetPathValue("code", "new-url")
+
+	recorder := httptest.NewRecorder()
+
+	handler.GetMetadata(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			recorder.Code,
+		)
+	}
+
+	expected := `{
+		"code":"new-url",
+		"original_url":"https://example.com/new",
+		"created_at":"2026-09-29T12:00:00Z",
+		"expires_at":null,
+		"redirect_count":0,
+		"last_accessed_at":null
+	}`
+
+	assertJSONEqual(t, expected, recorder.Body.String())
+}
+
+func TestURLHandlerGetMetadataNotFound(t *testing.T) {
+	urlRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			alias string,
+		) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(
+			ctx context.Context,
+			id int64,
+		) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+	}
+
+	analyticsRepo := &fakeAnalyticsRepository{}
+
+	svc := service.NewURLService(
+		urlRepo,
+		"http://localhost:8080",
+	).WithAnalyticsRepository(analyticsRepo)
+
+	handler := NewURLHandler(svc)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/urls/does-not-exist",
+		nil,
+	)
+
+	req.SetPathValue("code", "does-not-exist")
+
+	recorder := httptest.NewRecorder()
+
+	handler.GetMetadata(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusNotFound,
+			recorder.Code,
+		)
+	}
+}
+
+func TestURLHandlerGetMetadataAnalyticsError(t *testing.T) {
+	expectedErr := errors.New("analytics database unavailable")
+
+	alias := "docs"
+
+	urlRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			value string,
+		) (*domain.URL, error) {
+			return &domain.URL{
+				ID:          123,
+				OriginalURL: "https://example.com/docs",
+				CustomAlias: &alias,
+				CreatedAt:   time.Now(),
+			}, nil
+		},
+	}
+
+	analyticsRepo := &fakeAnalyticsRepository{
+		getAnalyticsFunc: func(
+			ctx context.Context,
+			urlID int64,
+		) (*repository.URLAnalytics, error) {
+			return nil, expectedErr
+		},
+	}
+
+	svc := service.NewURLService(
+		urlRepo,
+		"http://localhost:8080",
+	).WithAnalyticsRepository(analyticsRepo)
+
+	handler := NewURLHandler(svc)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/urls/docs",
+		nil,
+	)
+
+	req.SetPathValue("code", "docs")
+
+	recorder := httptest.NewRecorder()
+
+	handler.GetMetadata(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			recorder.Code,
+		)
+	}
+}
+
+func assertJSONEqual(t *testing.T, expected, actual string) {
+	t.Helper()
+
+	var expectedJSON any
+	if err := json.Unmarshal([]byte(expected), &expectedJSON); err != nil {
+		t.Fatalf("invalid expected JSON: %v", err)
+	}
+
+	var actualJSON any
+	if err := json.Unmarshal([]byte(actual), &actualJSON); err != nil {
+		t.Fatalf("invalid actual JSON: %v", err)
+	}
+
+	if !reflect.DeepEqual(expectedJSON, actualJSON) {
+		t.Fatalf(
+			"JSON mismatch:\nexpected: %s\nactual:   %s",
+			expected,
+			actual,
+		)
+	}
 }
