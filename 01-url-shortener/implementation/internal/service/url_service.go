@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/analytics"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/base62"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/cache"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/domain"
@@ -25,8 +26,13 @@ const maxURLLength = 2048
 type URLService struct {
 	repository repository.URLRepository
 	cache      cache.Cache
+	analytics  analyticsEmitter
 	baseURL    string
 	metrics    Metrics
+}
+
+type analyticsEmitter interface {
+	Emit(event analytics.RedirectEvent) bool
 }
 
 func NewURLService(
@@ -49,6 +55,11 @@ func NewURLService(
 
 func (s *URLService) WithMetrics(m Metrics) *URLService {
 	s.metrics = m
+	return s
+}
+
+func (s *URLService) WithAnalytics(emitter analyticsEmitter) *URLService {
+	s.analytics = emitter
 	return s
 }
 
@@ -205,6 +216,9 @@ func (s *URLService) ResolveURL(
 					return nil, ErrURLExpired
 				}
 
+				s.recordRedirectAnalytics(code)
+				s.recordRedirectAnalyticsEntity(entry.URLID)
+
 				if s.metrics != nil {
 					s.metrics.Redirect()
 				}
@@ -248,6 +262,7 @@ func (s *URLService) ResolveURL(
 		}
 
 		s.cacheURL(ctx, cacheKey, urlEntity)
+		s.recordRedirectAnalyticsEntity(urlEntity.ID)
 
 		if s.metrics != nil {
 			s.metrics.Redirect()
@@ -284,6 +299,7 @@ func (s *URLService) ResolveURL(
 
 	// 5. Populate Redis for future requests.
 	s.cacheURL(ctx, cacheKey, urlEntity)
+	s.recordRedirectAnalyticsEntity(urlEntity.ID)
 
 	if s.metrics != nil {
 		s.metrics.Redirect()
@@ -292,6 +308,32 @@ func (s *URLService) ResolveURL(
 	return &ResolveURLOutput{
 		OriginalURL: urlEntity.OriginalURL,
 	}, nil
+}
+
+func (s *URLService) recordRedirectAnalytics(code string) {
+	if s.analytics == nil {
+		return
+	}
+
+	// Cache hits don't currently carry the database URL ID.
+	// Analytics therefore cannot be recorded correctly from a cache-only
+	// entry until the cache payload includes URLID.
+	//
+	// This path is intentionally left without an event for now.
+	_ = code
+}
+
+func (s *URLService) recordRedirectAnalyticsEntity(urlID int64) {
+	if s.analytics == nil {
+		return
+	}
+
+	// Analytics emission is intentionally non-blocking.
+	// A full analytics buffer must not delay a successful redirect.
+	s.analytics.Emit(analytics.RedirectEvent{
+		URLID:      urlID,
+		AccessedAt: time.Now().UTC(),
+	})
 }
 
 func (s *URLService) cacheURL(
@@ -304,6 +346,7 @@ func (s *URLService) cacheURL(
 	}
 
 	entry := cache.URLCacheEntry{
+		URLID:      urlEntity.ID,
 		OriginalURL: urlEntity.OriginalURL,
 		ExpiresAt:   urlEntity.ExpiresAt,
 	}

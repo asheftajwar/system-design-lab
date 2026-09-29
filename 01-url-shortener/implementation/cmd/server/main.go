@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/analytics"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/cache"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/config"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/handler"
@@ -44,6 +49,8 @@ func main() {
 	log.Println("connected to PostgreSQL")
 
 	urlRepository := repository.NewPostgresURLRepository(pool)
+	analyticsRepository := repository.NewPostgresAnalyticsRepository(pool)
+
 	urlCache, err := cache.NewRedisCache(cfg.RedisURL, 24*time.Hour)
 	if err != nil {
 		log.Fatalf("failed to create Redis cache: %v", err)
@@ -57,17 +64,41 @@ func main() {
 	log.Println("connected to Redis")
 
 	appMetrics := metrics.New()
-
 	serviceMetrics := metrics.NewServiceMetrics(appMetrics)
 
 	registry := prometheus.NewRegistry()
 
-	urlService := service.NewURLService(urlRepository, cfg.BaseURL, urlCache).WithMetrics(serviceMetrics)
-	urlHandler := handler.NewURLHandler(urlService)
-
 	if err := appMetrics.Register(registry); err != nil {
 		log.Fatalf("failed to register metrics: %v", err)
 	}
+
+	analyticsWorker := analytics.NewWorker(
+		analyticsRepository,
+		analytics.WorkerConfig{
+			BufferSize:  1000,
+			FlushSize:   100,
+			FlushPeriod: time.Second,
+		},
+	)
+
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	workerDone := make(chan error, 1)
+
+	go func() {
+		workerDone <- analyticsWorker.Run(workerCtx)
+	}()
+
+	log.Println("analytics worker started")
+
+	urlService := service.NewURLService(
+		urlRepository,
+		cfg.BaseURL,
+		urlCache,
+	).
+		WithMetrics(serviceMetrics).
+		WithAnalytics(analyticsWorker)
+
+	urlHandler := handler.NewURLHandler(urlService)
 
 	mux := http.NewServeMux()
 
@@ -80,6 +111,7 @@ func main() {
 		registry,
 		promhttp.HandlerOpts{},
 	))
+
 	mux.HandleFunc("POST /v1/urls", urlHandler.CreateURL)
 	mux.HandleFunc("GET /{code}", urlHandler.Redirect)
 
@@ -90,7 +122,57 @@ func main() {
 
 	log.Printf("server listening on %s", server.Addr)
 
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	// Listen for operating-system shutdown signals.
+	signalCtx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	serverErr := make(chan error, 1)
+
+	go func() {
+		serverErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("server failed: %v", err)
+		}
+
+	case <-signalCtx.Done():
+		log.Println("shutdown signal received")
 	}
+
+	// Stop accepting new HTTP requests and wait for active requests
+	// to finish.
+	shutdownCtx, shutdownCancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("HTTP server shutdown failed: %v", err)
+	}
+
+	shutdownCancel()
+
+	// Stop analytics ingestion and flush accepted events.
+	workerCancel()
+
+	select {
+	case err := <-workerDone:
+		if err != nil {
+			log.Printf("analytics worker shutdown failed: %v", err)
+		} else {
+			log.Println("analytics worker stopped")
+		}
+
+	case <-time.After(6 * time.Second):
+		log.Println("analytics worker shutdown timed out")
+	}
+
+	log.Println("server stopped")
 }

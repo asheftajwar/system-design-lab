@@ -6,6 +6,7 @@ import (
 )
 
 type URLCacheEntry struct {
+	URLID      	int64      `json:"url_id"`
 	OriginalURL string     `json:"original_url"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
