@@ -62,12 +62,17 @@ func (f *fakeAnalyticsRepository) EventCount() int {
 func TestWorkerFlushesEvents(t *testing.T) {
 	repo := &fakeAnalyticsRepository{}
 
+	dropped := 0
+
 	worker := NewWorker(
 		repo,
 		WorkerConfig{
 			BufferSize:  10,
 			FlushSize:   2,
 			FlushPeriod: time.Hour,
+			OnEventDropped: func() {
+				dropped++
+			},
 		},
 	)
 
@@ -110,6 +115,7 @@ func TestWorkerFlushesEvents(t *testing.T) {
 
 func TestWorkerFlushesOnShutdown(t *testing.T) {
 	repo := &fakeAnalyticsRepository{}
+	dropped := 0
 
 	worker := NewWorker(
 		repo,
@@ -117,6 +123,9 @@ func TestWorkerFlushesOnShutdown(t *testing.T) {
 			BufferSize:  10,
 			FlushSize:   100,
 			FlushPeriod: time.Hour,
+			OnEventDropped: func() {
+				dropped++
+			},
 		},
 	)
 
@@ -153,11 +162,16 @@ func TestWorkerFlushesOnShutdown(t *testing.T) {
 func TestWorkerDropsEventsWhenBufferIsFull(t *testing.T) {
 	repo := &fakeAnalyticsRepository{}
 
+	dropped := 0
+
 	worker := NewWorker(
 		repo,
 		WorkerConfig{
 			BufferSize: 1,
 			FlushSize:  100,
+			OnEventDropped: func() {
+				dropped++
+			},
 		},
 	)
 
@@ -170,6 +184,10 @@ func TestWorkerDropsEventsWhenBufferIsFull(t *testing.T) {
 		URLID:      2,
 		AccessedAt: time.Now().UTC(),
 	})
+
+	if dropped != 1 {
+		t.Fatalf("expected 1 dropped event, got %d", dropped)
+	}
 
 	if !first {
 		t.Fatal("expected first event to be accepted")
@@ -185,12 +203,17 @@ func TestWorkerRecoversAfterRepositoryError(t *testing.T) {
 		err: errors.New("database unavailable"),
 	}
 
+	dropped := 0
+
 	worker := NewWorker(
 		repo,
 		WorkerConfig{
 			BufferSize:  10,
 			FlushSize:   1,
 			FlushPeriod: 20 * time.Millisecond,
+			OnEventDropped: func() {
+				dropped++
+			},
 		},
 	)
 

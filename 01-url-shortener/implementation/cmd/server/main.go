@@ -75,9 +75,10 @@ func main() {
 	analyticsWorker := analytics.NewWorker(
 		analyticsRepository,
 		analytics.WorkerConfig{
-			BufferSize:  1000,
-			FlushSize:   100,
-			FlushPeriod: time.Second,
+			BufferSize:     1000,
+			FlushSize:      100,
+			FlushPeriod:    time.Second,
+			OnEventDropped: appMetrics.AnalyticsEventDropped,
 		},
 	)
 

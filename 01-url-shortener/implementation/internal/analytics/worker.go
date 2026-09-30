@@ -9,16 +9,18 @@ import (
 )
 
 type Worker struct {
-	repository  repository.AnalyticsRepository
-	events      chan RedirectEvent
-	flushSize   int
-	flushPeriod time.Duration
+	repository     repository.AnalyticsRepository
+	events         chan RedirectEvent
+	flushSize      int
+	flushPeriod    time.Duration
+	onEventDropped func()
 }
 
 type WorkerConfig struct {
-	BufferSize  int
-	FlushSize   int
-	FlushPeriod time.Duration
+	BufferSize     int
+	FlushSize      int
+	FlushPeriod    time.Duration
+	OnEventDropped func()
 }
 
 func NewWorker(
@@ -38,10 +40,11 @@ func NewWorker(
 	}
 
 	return &Worker{
-		repository:  repo,
-		events:      make(chan RedirectEvent, cfg.BufferSize),
-		flushSize:   cfg.FlushSize,
-		flushPeriod: cfg.FlushPeriod,
+		repository:     repo,
+		events:         make(chan RedirectEvent, cfg.BufferSize),
+		flushSize:      cfg.FlushSize,
+		flushPeriod:    cfg.FlushPeriod,
+		onEventDropped: cfg.OnEventDropped,
 	}
 }
 
@@ -54,6 +57,10 @@ func (w *Worker) Emit(event RedirectEvent) bool {
 	case w.events <- event:
 		return true
 	default:
+		if w.onEventDropped != nil {
+			w.onEventDropped()
+		}
+
 		return false
 	}
 }

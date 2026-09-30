@@ -5,11 +5,14 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"encoding/json"
 
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/base62"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/cache"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/domain"
 	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/repository"
+	"github.com/asheftajwar/system-design-lab/01-url-shortener/internal/analytics"
+
 )
 
 type fakeURLRepository struct {
@@ -990,5 +993,251 @@ func TestURLServiceCreateURLInvalidatesAliasCache(t *testing.T) {
 
 	if _, exists := urlCache.values["url:B"]; exists {
 		t.Fatal("expected custom alias cache entry to be invalidated")
+	}
+}
+
+func TestURLServiceResolveURLExpiredFromCache(t *testing.T) {
+	expiredAt := time.Now().UTC().Add(-time.Hour)
+
+	fakeRepo := &fakeURLRepository{}
+
+	fakeCache := &fakeCache{
+		getFunc: func(ctx context.Context, key string) (string, error) {
+			entry := cache.URLCacheEntry{
+				URLID:       123,
+				OriginalURL: "https://example.com/expired",
+				ExpiresAt:   &expiredAt,
+			}
+
+			data, err := json.Marshal(entry)
+			if err != nil {
+				return "", err
+			}
+
+			return string(data), nil
+		},
+	}
+
+	svc := NewURLService(
+		fakeRepo,
+		"http://localhost:8080",
+		fakeCache,
+	)
+
+	_, err := svc.ResolveURL(context.Background(), "expired")
+
+	if !errors.Is(err, ErrURLExpired) {
+		t.Fatalf("expected ErrURLExpired, got %v", err)
+	}
+}
+
+func TestURLServiceResolveURLExpiredFromRepository(t *testing.T) {
+	expiredAt := time.Now().UTC().Add(-time.Hour)
+
+	fakeRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			alias string,
+		) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(
+			ctx context.Context,
+			id int64,
+		) (*domain.URL, error) {
+			return &domain.URL{
+				ID:          id,
+				OriginalURL: "https://example.com/expired",
+				ExpiresAt:   &expiredAt,
+			}, nil
+		},
+	}
+
+	svc := NewURLService(
+		fakeRepo,
+		"http://localhost:8080",
+	)
+
+	_, err := svc.ResolveURL(
+		context.Background(),
+		base62.Encode(123),
+	)
+
+	if !errors.Is(err, ErrURLExpired) {
+		t.Fatalf("expected ErrURLExpired, got %v", err)
+	}
+}
+
+func TestURLServiceGetURLMetadataExpiredURL(t *testing.T) {
+	expiredAt := time.Now().UTC().Add(-time.Hour)
+	createdAt := time.Now().UTC().Add(-2 * time.Hour)
+
+	fakeRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			alias string,
+		) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(
+			ctx context.Context,
+			id int64,
+		) (*domain.URL, error) {
+			return &domain.URL{
+				ID:          id,
+				OriginalURL: "https://example.com/expired",
+				ExpiresAt:   &expiredAt,
+				CreatedAt:   createdAt,
+			}, nil
+		},
+	}
+
+	svc := NewURLService(
+		fakeRepo,
+		"http://localhost:8080",
+	)
+
+	result, err := svc.GetURLMetadata(
+		context.Background(),
+		base62.Encode(123),
+	)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.ExpiresAt == nil {
+		t.Fatal("expected expiration time")
+	}
+
+	if !result.ExpiresAt.Equal(expiredAt) {
+		t.Fatalf(
+			"expected expiration %v, got %v",
+			expiredAt,
+			*result.ExpiresAt,
+		)
+	}
+}
+
+func TestURLServiceResolveURLCacheReadAndWriteFailureStillRedirects(
+	t *testing.T,
+) {
+	fakeRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			alias string,
+		) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(
+			ctx context.Context,
+			id int64,
+		) (*domain.URL, error) {
+			return &domain.URL{
+				ID:          id,
+				OriginalURL: "https://example.com/cache-failure",
+			}, nil
+		},
+	}
+
+	fakeCache := &fakeCache{
+		getFunc: func(
+			ctx context.Context,
+			key string,
+		) (string, error) {
+			return "", errors.New("redis unavailable")
+		},
+		setFunc: func(
+			ctx context.Context,
+			key string,
+			value string,
+		) error {
+			return errors.New("redis unavailable")
+		},
+	}
+
+	svc := NewURLService(
+		fakeRepo,
+		"http://localhost:8080",
+		fakeCache,
+	)
+
+	result, err := svc.ResolveURL(
+		context.Background(),
+		base62.Encode(123),
+	)
+
+	if err != nil {
+		t.Fatalf("expected redirect to succeed, got %v", err)
+	}
+
+	if result.OriginalURL != "https://example.com/cache-failure" {
+		t.Fatalf(
+			"unexpected original URL: %s",
+			result.OriginalURL,
+		)
+	}
+}
+
+type fakeAnalyticsEmitter struct {
+	emitFunc func(event analytics.RedirectEvent) bool
+}
+
+func (f *fakeAnalyticsEmitter) Emit(
+	event analytics.RedirectEvent,
+) bool {
+	if f.emitFunc != nil {
+		return f.emitFunc(event)
+	}
+
+	return true
+}
+
+func TestURLServiceResolveURLAnalyticsFailureDoesNotBreakRedirect(
+	t *testing.T,
+) {
+	fakeRepo := &fakeURLRepository{
+		getByAliasFunc: func(
+			ctx context.Context,
+			alias string,
+		) (*domain.URL, error) {
+			return nil, repository.ErrNotFound
+		},
+		getByIDFunc: func(
+			ctx context.Context,
+			id int64,
+		) (*domain.URL, error) {
+			return &domain.URL{
+				ID:          id,
+				OriginalURL: "https://example.com/analytics-failure",
+			}, nil
+		},
+	}
+
+	fakeAnalytics := &fakeAnalyticsEmitter{
+		emitFunc: func(event analytics.RedirectEvent) bool {
+			return false
+		},
+	}
+
+	svc := NewURLService(
+		fakeRepo,
+		"http://localhost:8080",
+	).WithAnalytics(fakeAnalytics)
+
+	result, err := svc.ResolveURL(
+		context.Background(),
+		base62.Encode(123),
+	)
+
+	if err != nil {
+		t.Fatalf("expected redirect to succeed, got %v", err)
+	}
+
+	if result.OriginalURL != "https://example.com/analytics-failure" {
+		t.Fatalf(
+			"unexpected original URL: %s",
+			result.OriginalURL,
+		)
 	}
 }

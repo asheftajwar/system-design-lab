@@ -8,14 +8,15 @@ import (
 )
 
 type Metrics struct {
-	HTTPRequestsTotal   *prometheus.CounterVec
-	HTTPRequestDuration *prometheus.HistogramVec
-	CacheHitsTotal      prometheus.Counter
-	CacheMissesTotal    prometheus.Counter
-	CacheErrorsTotal    prometheus.Counter
-	DBLookupsTotal      prometheus.Counter
-	RedirectsTotal      prometheus.Counter
-	CreationsTotal      prometheus.Counter
+	HTTPRequestsTotal           *prometheus.CounterVec
+	HTTPRequestDuration         *prometheus.HistogramVec
+	CacheHitsTotal              prometheus.Counter
+	CacheMissesTotal            prometheus.Counter
+	CacheErrorsTotal            prometheus.Counter
+	DBLookupsTotal              prometheus.Counter
+	RedirectsTotal              prometheus.Counter
+	CreationsTotal              prometheus.Counter
+	AnalyticsEventsDroppedTotal prometheus.Counter
 }
 
 func New() *Metrics {
@@ -78,6 +79,13 @@ func New() *Metrics {
 				Help: "Total number of URL creations.",
 			},
 		),
+
+		AnalyticsEventsDroppedTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "url_analytics_events_dropped_total",
+				Help: "Total number of analytics events dropped because the worker buffer was full.",
+			},
+		),
 	}
 
 	return m
@@ -93,6 +101,7 @@ func (m *Metrics) Register(registry *prometheus.Registry) error {
 		m.DBLookupsTotal,
 		m.RedirectsTotal,
 		m.CreationsTotal,
+		m.AnalyticsEventsDroppedTotal,
 	}
 
 	for _, collector := range collectors {
@@ -120,4 +129,8 @@ func (m *Metrics) ObserveHTTPRequest(
 		method,
 		path,
 	).Observe(duration.Seconds())
+}
+
+func (m *Metrics) AnalyticsEventDropped() {
+	m.AnalyticsEventsDroppedTotal.Inc()
 }
