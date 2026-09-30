@@ -1,0 +1,24 @@
+flowchart TD
+    Redirect[Successful Redirect]
+        --> Emit[Emit Redirect Event]
+
+    Emit --> Buffer{Worker Buffer Available?}
+
+    Buffer -->|Yes| Queue[Buffered Event]
+    Buffer -->|No| Drop[Drop Event]
+
+    Drop --> Counter[url_analytics_events_dropped_total]
+
+    Queue --> Batch{Batch Full or Timer Fires?}
+
+    Batch -->|No| Queue
+    Batch -->|Yes| Flush[Flush Batch]
+
+    Flush --> DB[(PostgreSQL url_analytics)]
+
+    DB --> Success{Write Successful?}
+
+    Success -->|Yes| Done[Batch Complete]
+    Success -->|No| Retry[Retain Batch for Retry]
+
+    Retry --> Flush

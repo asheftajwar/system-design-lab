@@ -1,0 +1,33 @@
+flowchart LR
+    Client[Client]
+
+    LB[Load Balancer]
+
+    subgraph API[Go API Instance]
+        Router[HTTP Router]
+        Service[URL Service]
+        Analytics[In-process Analytics Worker]
+    end
+
+    Redis[(Redis)]
+    Postgres[(PostgreSQL)]
+
+    URLs[(urls)]
+    AnalyticsDB[(url_analytics)]
+
+    Client --> LB
+    LB --> Router
+
+    Router --> Service
+
+    Service --> Redis
+    Service --> Postgres
+
+    Postgres --> URLs
+    Postgres --> AnalyticsDB
+
+    Service --> Analytics
+    Analytics --> AnalyticsDB
+
+    Router --> Health[/health/]
+    Router --> Metrics[/metrics/]

@@ -14,78 +14,137 @@ Output:
 https://sho.rt/aB91x
 ```
 
-When a user visits the short URL, the service redirects them to the original URL.
+When a user visits the short URL, the service resolves the mapping and returns an HTTP redirect to the original URL.
+
+The implementation is intentionally focused on the core shortening and redirect problem rather than authentication, billing, custom domains, or advanced analytics.
 
 ---
 
-## 2. Functional Requirements
+# 2. Functional Requirements
 
-### 2.1 Create Short URL
+## 2.1 Create Short URL
 
-The system must allow a client to submit a long URL and receive a unique short URL.
+The system must accept a URL and create a persistent short-code mapping.
+
+Endpoint:
 
 ```http
 POST /v1/urls
-Content-Type: application/json
+```
 
+Example request:
+
+```json
 {
   "url": "https://example.com/products/item?id=12345"
 }
 ```
 
-Response:
+Optional fields:
 
 ```json
 {
-  "short_url": "https://sho.rt/aB91x",
-  "code": "aB91x"
+  "url": "https://example.com/products/item?id=12345",
+  "expires_at": "2027-01-01T00:00:00Z",
+  "custom_alias": "docs"
 }
 ```
 
-### 2.2 Redirect
+Example response:
 
-A client can access the short URL:
+```json
+{
+  "code": "aB91x",
+  "short_url": "https://sho.rt/aB91x",
+  "expires_at": null
+}
+```
+
+The mapping must be persisted before the creation request succeeds.
+
+---
+
+## 2.2 Redirect
+
+A client can access:
 
 ```http
 GET /aB91x
 ```
 
-The service resolves the short code and redirects the client to the original URL.
-
-Expected response:
+The service resolves the short code and returns:
 
 ```http
-HTTP/1.1 302 Found
+302 Found
 Location: https://example.com/products/item?id=12345
 ```
 
-### 2.3 Unique Short Codes
-
-Every active URL must have a unique short code.
-
-Example:
+Possible redirect outcomes include:
 
 ```text
-aB91x → URL A
-7Kp2m → URL B
-z91Qa → URL C
+302 Found       URL resolved successfully
+404 Not Found   code does not exist
+410 Gone        URL exists but has expired
+500 Internal    unexpected server failure
 ```
 
-Two different URLs must not accidentally receive the same active code.
+---
 
-### 2.4 URL Validation
+## 2.3 Generated Short Codes
 
-The service must reject malformed or unsupported URLs.
+Generated codes must be unique.
 
-At minimum:
+The current implementation uses:
 
-* URL must be syntactically valid.
-* HTTP and HTTPS URLs are supported.
-* Empty URLs are rejected.
+```text
+PostgreSQL BIGSERIAL ID
+        ↓
+Base62 encoding
+        ↓
+short code
+```
 
-### 2.5 Expiration
+This provides deterministic uniqueness without random collision retries.
 
-A URL may optionally have an expiration time.
+With seven Base62 characters:
+
+```text
+62^7 ≈ 3.5 trillion
+```
+
+possible combinations exist.
+
+The implementation does not require a fixed seven-character code length.
+
+---
+
+## 2.4 URL Validation
+
+The service must reject invalid URLs.
+
+The current implementation requires:
+
+* non-empty URL
+* syntactically parseable URL
+* HTTP or HTTPS scheme
+* non-empty host
+* maximum URL length of 2048 characters
+
+Unsupported schemes such as:
+
+```text
+ftp://
+javascript:
+file://
+```
+
+are rejected.
+
+---
+
+## 2.5 Expiration
+
+A URL may optionally have an expiration timestamp.
 
 Example:
 
@@ -96,17 +155,33 @@ Example:
 }
 ```
 
-After expiration, the short URL must no longer redirect to the original URL.
+The expiration timestamp must be in the future when creating the URL.
 
-### 2.6 Custom Alias
+After expiration:
 
-The API may optionally allow a user to request a custom short code.
+```http
+GET /aB91x
+```
+
+returns:
+
+```http
+410 Gone
+```
+
+Expiration is checked from the URL's `expires_at` value rather than relying exclusively on Redis TTL.
+
+---
+
+## 2.6 Custom Alias
+
+The API supports an optional custom alias.
 
 Example:
 
 ```json
 {
-  "url": "https://example.com",
+  "url": "https://example.com/docs",
   "custom_alias": "docs"
 }
 ```
@@ -117,17 +192,69 @@ Result:
 https://sho.rt/docs
 ```
 
-The alias must be unique.
+Alias requirements:
 
-### 2.7 Basic Analytics
+```text
+Length:     1–64 characters
+Characters: A-Z, a-z, 0-9, -, _
+```
 
-The system should record basic access information:
+Aliases must be unique.
 
-* number of redirects
-* creation time
+If an alias already exists, the API returns:
+
+```http
+409 Conflict
+```
+
+PostgreSQL enforces uniqueness through a partial unique index.
+
+---
+
+## 2.7 URL Metadata
+
+The system provides basic metadata through:
+
+```http
+GET /v1/urls/{code}
+```
+
+Example:
+
+```json
+{
+  "code": "aB91x",
+  "original_url": "https://example.com/products/item",
+  "created_at": "2026-09-25T00:00:00Z",
+  "expires_at": null,
+  "redirect_count": 1542,
+  "last_accessed_at": "2026-09-25T02:30:00Z"
+}
+```
+
+The metadata endpoint supports both generated codes and custom aliases.
+
+---
+
+## 2.8 Basic Analytics
+
+The system records:
+
+* redirect count
 * last accessed time
+* creation time
 
-Detailed analytics such as geographic location, device information, and referrer analysis are out of scope for the initial version.
+Redirect analytics are processed asynchronously.
+
+The redirect request must not synchronously wait for an analytics database write.
+
+The current V1 implementation intentionally allows analytics events to be dropped when the worker buffer is full.
+
+Dropped events are observable through:
+
+```text
+url_analytics_events_dropped_total
+```
 
 ---
 
@@ -135,23 +262,21 @@ Detailed analytics such as geographic location, device information, and referrer
 
 ## 3.1 Availability
 
-The redirect path should be highly available because users depend on the short URL to reach the destination.
-
 Target:
 
 ```text
-99.9% availability
+99.9% redirect availability
 ```
 
-for the redirect endpoint.
+The redirect path should continue operating when Redis is unavailable, provided PostgreSQL remains available.
 
-The URL-creation endpoint may tolerate slightly more latency and occasional temporary unavailability.
+Cached redirects may continue operating during a PostgreSQL outage, subject to cache availability and cache contents.
 
 ---
 
 ## 3.2 Latency
 
-Target latency for redirect requests:
+Initial target for redirect requests:
 
 ```text
 p50 < 50 ms
@@ -159,45 +284,81 @@ p95 < 100 ms
 p99 < 200 ms
 ```
 
-These targets refer to server-side processing and do not include arbitrary Internet or destination-server latency.
+These are service-side targets and exclude arbitrary network latency and the latency of the destination server.
+
+Actual load-test results are documented separately and must not be interpreted as a universal production capacity guarantee.
 
 ---
 
 ## 3.3 Scalability
 
-The service must support horizontal scaling of API servers.
+The API layer must be horizontally scalable.
 
-The architecture should be capable of handling substantially higher read traffic than write traffic.
+The architecture should support multiple stateless API instances behind a load balancer.
+
+The workload is expected to be strongly read-heavy:
+
+```text
+Redirects >> URL creations
+```
 
 ---
 
 ## 3.4 Durability
 
-Once a URL has been successfully created, its mapping should survive individual application-server failures.
+Successfully created URL mappings must survive:
 
-The persistent URL mapping must therefore be stored outside the API process.
+* API process restarts
+* API instance failures
+* Redis cache loss
+
+PostgreSQL is therefore the persistent source of truth.
 
 ---
 
 ## 3.5 Consistency
 
-URL creation requires strong uniqueness guarantees.
+Generated short-code uniqueness must be strongly guaranteed.
 
-For example:
+Custom alias uniqueness must be strongly guaranteed.
+
+The database is responsible for the final uniqueness constraint.
+
+Redis is derived state and may be lost or repopulated without losing URL mappings.
+
+---
+
+## 3.6 Graceful Degradation
+
+Redis is not a hard dependency for redirect correctness.
+
+If Redis cannot be read:
 
 ```text
-custom alias "docs"
+Redis failure
+    ↓
+PostgreSQL lookup
+    ↓
+redirect
 ```
 
-must not simultaneously belong to two different URLs.
+If Redis cannot be written after a PostgreSQL lookup, the redirect can still succeed.
 
-Redirect reads can tolerate limited eventual consistency in some future optimizations, provided newly created URLs become available within an acceptable period.
+Analytics is also not a hard dependency for redirects.
+
+If an analytics event cannot be accepted by the worker:
+
+```text
+analytics failure/drop
+        ↓
+redirect continues
+```
 
 ---
 
 # 4. Scale Assumptions
 
-These are exercise assumptions rather than real-world measurements.
+These figures are design-exercise assumptions rather than production measurements.
 
 Assume:
 
@@ -206,11 +367,10 @@ Total stored URLs:             100 million
 New URLs created per day:      1 million
 Redirects per day:             100 million
 Peak traffic multiplier:       5x average
-Average URL size:              200 bytes
-Short-code length:             7 characters
+Average original URL size:     200 bytes
 ```
 
-The system is therefore strongly read-heavy.
+This produces a strongly read-heavy workload.
 
 Approximate ratio:
 
@@ -225,20 +385,18 @@ Redirects : Creates
 
 ## URL Creation
 
-1 million new URLs per day:
-
 ```text
 1,000,000 / 86,400
-≈ 11.6 requests/sec
+≈ 11.6 requests/sec average
 ```
 
-Average:
+Rounded:
 
 ```text
-≈ 12 writes/sec
+≈ 12 writes/sec average
 ```
 
-Assuming a 5x peak factor:
+With a 5x peak assumption:
 
 ```text
 ≈ 60 writes/sec peak
@@ -248,83 +406,81 @@ Assuming a 5x peak factor:
 
 ## Redirect Traffic
 
-100 million redirects per day:
-
 ```text
 100,000,000 / 86,400
-≈ 1,157 requests/sec
+≈ 1,157 requests/sec average
 ```
 
-Average:
+Rounded:
 
 ```text
-≈ 1.2K requests/sec
+≈ 1.2K redirects/sec average
 ```
 
-With a 5x peak factor:
+With a 5x peak assumption:
 
 ```text
-≈ 5.8K requests/sec peak
+≈ 5.8K redirects/sec peak
 ```
 
-Therefore, the initial capacity target is approximately:
+Therefore the design exercise targets approximately:
 
 ```text
-Create:
+Creates:
 ~60 writes/sec peak
 
-Redirect:
+Redirects:
 ~6K reads/sec peak
 ```
+
+These are planning assumptions, not measured limits of the implementation.
 
 ---
 
 # 6. Storage Estimate
 
-Assume approximately:
+A rough planning model:
 
 ```text
-original URL:        200 bytes
-short code:           7 bytes
-metadata/indexes:   ~100 bytes
+Original URL:       ~200 bytes
+Short-code data:     small/inferred from ID
+Metadata/indexes:   additional overhead
 ```
 
-Approximate storage per mapping:
+A simplified estimate of approximately:
 
 ```text
-~300 bytes
+~300 bytes per mapping
 ```
 
-For 100 million URLs:
+gives:
 
 ```text
 100,000,000 × 300 bytes
 ≈ 30 GB
 ```
 
-This is a rough estimate.
-
-Real database storage will be higher because of:
+Actual PostgreSQL storage will be higher because of:
 
 * row overhead
 * indexes
 * page overhead
-* replication
 * WAL
+* replication
 * timestamps
 * analytics data
 
-A practical initial planning estimate is therefore:
+A practical planning estimate is:
 
 ```text
 ~50–100 GB
 ```
 
-for the primary URL-mapping dataset and indexes.
+for the primary URL mapping dataset and associated indexes, before detailed production capacity planning.
 
 ---
 
-# 7. Core API
+# 7. API Requirements
 
 ## Create URL
 
@@ -342,6 +498,12 @@ Request:
 }
 ```
 
+Success:
+
+```http
+201 Created
+```
+
 Response:
 
 ```json
@@ -352,6 +514,14 @@ Response:
 }
 ```
 
+Relevant error classes include:
+
+```text
+400 Bad Request
+409 Conflict
+500 Internal Server Error
+```
+
 ---
 
 ## Redirect
@@ -360,54 +530,75 @@ Response:
 GET /{code}
 ```
 
-Possible responses:
+Success:
 
-```text
+```http
 302 Found
 ```
 
-or:
+Not found:
 
-```text
+```http
 404 Not Found
 ```
 
-or:
+Expired:
 
-```text
+```http
 410 Gone
 ```
 
-for an expired URL.
-
 ---
 
-## Get URL Metadata
+## URL Metadata
 
 ```http
 GET /v1/urls/{code}
 ```
 
-Example response:
+Success:
 
-```json
-{
-  "code": "aB91x",
-  "url": "https://example.com/very/long/path",
-  "created_at": "2026-09-25T00:00:00Z",
-  "expires_at": null,
-  "redirect_count": 1542,
-  "last_accessed_at": "2026-09-25T02:30:00Z"
-}
+```http
+200 OK
 ```
+
+The response includes:
+
+* code
+* original URL
+* creation time
+* expiration time
+* redirect count
+* last access time
+
+---
+
+## Health
+
+```http
+GET /health
+```
+
+The service exposes a health endpoint for basic process/service health checks.
+
+---
+
+## Metrics
+
+```http
+GET /metrics
+```
+
+Prometheus-compatible metrics are exposed for HTTP traffic, cache behavior, database lookups, redirects, creations, and dropped analytics events.
 
 ---
 
 # 8. Out of Scope
 
-The initial system will not implement:
+The current implementation does not provide:
 
 * user authentication
+* user accounts
 * teams or organizations
 * billing
 * custom domains
@@ -418,26 +609,84 @@ The initial system will not implement:
 * malicious URL scanning
 * browser extensions
 * mobile applications
-* multi-region deployment
 * advanced analytics dashboards
+* multi-region deployment
+* PostgreSQL read replicas
+* Kafka or another durable event stream
+* Kubernetes deployment
+* distributed ID generation
+* cache stampede protection
+* distributed locking
 
-These may be considered in later iterations.
+These may be evaluated in future iterations if workload measurements or product requirements justify them.
 
 ---
 
-# 9. Success Criteria
+# 9. Current Performance Evidence
 
-The initial implementation is successful when it can:
+The implementation has been exercised with k6.
+
+These results are benchmark observations under the tested local environment, not production capacity guarantees.
+
+## Hot-cache redirect test
+
+```text
+Virtual users: 50
+Duration:      30 seconds
+
+Requests:      128,996
+Throughput:    ~4,298 req/s
+Average:       11.17 ms
+p50:           10.03 ms
+p90:           17.45 ms
+p95:           20.81 ms
+Maximum:       205.52 ms
+Errors:        0%
+```
+
+## Database-path test
+
+Approximately one million URL rows were present during the test.
+
+```text
+Virtual users: 25
+Duration:      30 seconds
+
+Requests:      101,800
+Throughput:    ~3,393 req/s
+Average:       ~7 ms
+p50:           5.86 ms
+p90:           12.19 ms
+p95:           15.01 ms
+Maximum:       131.24 ms
+Errors:        0%
+```
+
+These measurements demonstrate behavior under the tested workload; they do not establish a universal maximum throughput.
+
+---
+
+# 10. Success Criteria
+
+The V1 implementation is considered complete when it can:
 
 1. Create a short URL.
-2. Persist the mapping.
-3. Redirect using the short code.
-4. Guarantee short-code uniqueness.
-5. Validate URLs.
-6. Support expiration.
-7. Support custom aliases.
-8. Record basic redirect statistics.
-9. Survive application-server restarts.
-10. Be horizontally scalable at the API layer.
-11. Pass automated unit and integration tests.
-12. Demonstrate performance under a representative load test.
+2. Persist the URL mapping in PostgreSQL.
+3. Generate deterministic unique short codes.
+4. Redirect using generated short codes.
+5. Support custom aliases.
+6. Enforce custom alias uniqueness.
+7. Validate HTTP/HTTPS URLs.
+8. Enforce URL length and alias validation.
+9. Support URL expiration.
+10. Return `410 Gone` for expired redirects.
+11. Return metadata through `GET /v1/urls/{code}`.
+12. Record redirect count and last-accessed time asynchronously.
+13. Continue redirects when Redis is unavailable, provided PostgreSQL can resolve the mapping.
+14. Keep analytics failures out of the redirect critical path.
+15. Expose operational Prometheus metrics.
+16. Gracefully shut down the HTTP server and analytics worker.
+17. Pass the automated test suite, subject to the known Windows Application Control execution restriction in the local environment.
+18. Provide reproducible load-test scripts.
+19. Demonstrate measured redirect performance under representative local load.
+20. Keep benchmark-only production endpoints out of the final implementation.

@@ -1,0 +1,35 @@
+sequenceDiagram
+    participant C as Client
+    participant H as Handler
+    participant S as URL Service
+    participant R as Redis
+    participant DB as PostgreSQL
+    participant A as Analytics Worker
+
+    C->>H: GET /{code}
+    H->>S: ResolveURL(code)
+
+    S->>R: GET url:{code}
+
+    alt Cache hit
+        R-->>S: URL cache entry
+        S->>S: Check expires_at
+    else Cache miss
+        R-->>S: Not found
+
+        S->>DB: Lookup custom alias
+
+        alt Alias found
+            DB-->>S: URL
+        else Alias not found
+            S->>S: Base62 decode code
+            S->>DB: Lookup by ID
+            DB-->>S: URL
+        end
+
+        S->>R: SET url:{code}
+    end
+
+    S->>A: Emit redirect event
+    S-->>H: Original URL
+    H-->>C: 302 Redirect

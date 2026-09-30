@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant C as Client
+    participant H as HTTP Handler
+    participant S as URL Service
+    participant DB as PostgreSQL
+    participant B as Base62
+
+    C->>H: POST /v1/urls
+    H->>S: CreateURL(request)
+
+    S->>S: Validate URL
+    S->>S: Validate expiration
+    S->>S: Validate custom alias
+
+    S->>DB: INSERT URL
+    DB-->>S: BIGSERIAL ID
+
+    S->>B: Encode ID
+    B-->>S: Short code
+
+    S-->>H: URL result
+    H-->>C: 201 Created
