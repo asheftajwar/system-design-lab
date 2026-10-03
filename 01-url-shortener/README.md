@@ -534,7 +534,7 @@ On Windows environments where Application Control blocks temporary Go test execu
 
 ```powershell
 go test -c -o handler.test.exe ./internal/handler
-.\handler.test.exe -test.v
+.\handler.test.exe
 Remove-Item .\handler.test.exe
 ```
 
