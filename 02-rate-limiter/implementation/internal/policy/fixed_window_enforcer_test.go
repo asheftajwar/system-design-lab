@@ -12,13 +12,6 @@ import (
 	"github.com/asheftajwar/system-design-lab/02-rate-limiter/internal/limiter"
 )
 
-// var fixedWindowTestKeyCounter uint64
-
-// func fixedWindowTestKey(name string) string {
-// 	n := atomic.AddUint64(&fixedWindowTestKeyCounter, 1)
-// 	return fmt.Sprintf("test:fixed-window-enforcer:%s:%d", name, n)
-// }
-
 var fixedWindowEnforcerTestKeyCounter uint64
 
 func fixedWindowEnforcerTestKey(name string) string {
