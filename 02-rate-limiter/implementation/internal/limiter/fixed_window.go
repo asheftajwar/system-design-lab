@@ -165,28 +165,6 @@ func (w *RedisFixedWindow) Allow(
 	}, nil
 }
 
-// Already declared in redis_token_bucket.go
-// func redisInt64(value interface{}) (int64, error) {
-// 	switch v := value.(type) {
-// 	case int64:
-// 		return v, nil
-// 	case string:
-// 		return strconv.ParseInt(v, 10, 64)
-// 	case []byte:
-// 		return strconv.ParseInt(string(v), 10, 64)
-// 	default:
-// 		return 0, fmt.Errorf("unexpected redis integer type %T", value)
-// 	}
-// }
-
-func ceilSeconds(milliseconds int64) int64 {
-	if milliseconds <= 0 {
-		return 0
-	}
-
-	return (milliseconds + 999) / 1000
-}
-
 func maxInt64(value, minimum int64) int64 {
 	if value < minimum {
 		return minimum
