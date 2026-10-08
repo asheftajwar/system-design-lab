@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -508,6 +509,137 @@ func TestEvaluator_UsesPolicyIDAsPriorityTieBreaker(t *testing.T) {
 		t.Fatalf(
 			"expected policy-b second, got %q",
 			enforcer.calls[1],
+		)
+	}
+}
+
+func TestEvaluator_WithAlgorithmEnforcer_MixedAlgorithms(t *testing.T) {
+	fake := &fakeEnforcer{
+		decisions: map[string]LimitDecision{
+			"token-policy": {
+				PolicyID:      "token-policy",
+				PolicyVersion: 1,
+				Allowed:       true,
+				Limit:         100,
+				Remaining:     90,
+			},
+			"fixed-policy": {
+				PolicyID:      "fixed-policy",
+				PolicyVersion: 1,
+				Allowed:       true,
+				Limit:         50,
+				Remaining:     40,
+			},
+			"sliding-policy": {
+				PolicyID:      "sliding-policy",
+				PolicyVersion: 1,
+				Allowed:       true,
+				Limit:         20,
+				Remaining:     15,
+			},
+		},
+	}
+
+	registry := NewAlgorithmEnforcer(map[Algorithm]Enforcer{
+		AlgorithmTokenBucket:   fake,
+		AlgorithmFixedWindow:   fake,
+		AlgorithmSlidingWindow: fake,
+	})
+
+	evaluator, err := NewEvaluator(registry)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
+
+	request := Request{
+		Identity: Identity{
+			Type:  IdentityUser,
+			Value: "user-123",
+		},
+		TenantID: "tenant-123",
+		Resource: Resource{
+			Method: "GET",
+			Path:   "/api/orders",
+		},
+		Cost: 1,
+	}
+
+	policies := []Policy{
+		{
+			ID:              "token-policy",
+			Version:         1,
+			Algorithm:       AlgorithmTokenBucket,
+			Limit:           100,
+			RefillRate:      10,
+			RequestCost:     1,
+			IdentityType:    IdentityUser,
+			TenantID:        "tenant-123",
+			Scope:           ScopeIdentity,
+			EnforcementMode: EnforcementStrict,
+			Enabled:         true,
+			Priority:        1,
+		},
+		{
+			ID:              "fixed-policy",
+			Version:         1,
+			Algorithm:       AlgorithmFixedWindow,
+			Limit:           50,
+			WindowSeconds:   60,
+			RequestCost:     1,
+			IdentityType:    IdentityUser,
+			TenantID:        "tenant-123",
+			Scope:           ScopeIdentity,
+			EnforcementMode: EnforcementStrict,
+			Enabled:         true,
+			Priority:        2,
+		},
+		{
+			ID:              "sliding-policy",
+			Version:         1,
+			Algorithm:       AlgorithmSlidingWindow,
+			Limit:           20,
+			WindowSeconds:   60,
+			RequestCost:     1,
+			IdentityType:    IdentityUser,
+			TenantID:        "tenant-123",
+			Scope:           ScopeIdentity,
+			EnforcementMode: EnforcementStrict,
+			Enabled:         true,
+			Priority:        3,
+		},
+	}
+
+	decision, err := evaluator.Evaluate(
+		context.Background(),
+		request,
+		policies,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+
+	if !decision.Allowed {
+		t.Fatal("expected request to be allowed")
+	}
+
+	if len(decision.Limits) != 3 {
+		t.Fatalf(
+			"evaluated limits = %d, want 3",
+			len(decision.Limits),
+		)
+	}
+
+	wantCalls := []string{
+		"token-policy",
+		"fixed-policy",
+		"sliding-policy",
+	}
+
+	if !reflect.DeepEqual(fake.calls, wantCalls) {
+		t.Fatalf(
+			"enforcer calls = %v, want %v",
+			fake.calls,
+			wantCalls,
 		)
 	}
 }

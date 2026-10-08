@@ -4,11 +4,24 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"fmt"
+	"sync/atomic"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/asheftajwar/system-design-lab/02-rate-limiter/internal/limiter"
 )
+
+var slidingWindowEnforcerTestKeyCounter uint64
+
+func slidingWindowEnforcerTestKey(name string) string {
+	n := atomic.AddUint64(&slidingWindowEnforcerTestKeyCounter, 1)
+	return fmt.Sprintf(
+		"test:policy:sliding-window:%s:%d",
+		name,
+		n,
+	)
+}
 
 func newTestSlidingWindowEnforcer(t *testing.T) *SlidingWindowEnforcer {
 	t.Helper()
@@ -102,7 +115,7 @@ func TestSlidingWindowEnforcer_RejectsAfterLimit(t *testing.T) {
 		Enabled:         true,
 	}
 
-	key := "test:policy:sliding-window:reject"
+	key := slidingWindowEnforcerTestKey("reject")
 
 	for i := 0; i < 5; i++ {
 		decision, err := enforcer.Allow(ctx, key, policy, 1)
@@ -149,7 +162,8 @@ func TestSlidingWindowEnforcer_PreservesRequestCost(t *testing.T) {
 		Enabled:         true,
 	}
 
-	key := "test:policy:sliding-window:cost"
+	key := slidingWindowEnforcerTestKey("cost")
+	
 
 	decision, err := enforcer.Allow(ctx, key, policy, 4)
 	if err != nil {

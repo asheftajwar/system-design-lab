@@ -40,8 +40,9 @@ func slidingWindowTestKey(name string) string {
 	n := atomic.AddUint64(&slidingWindowTestKeyCounter, 1)
 
 	return fmt.Sprintf(
-		"test:sliding-window:%s:%d",
+		"test:sliding-window:%s:%d:%d",
 		name,
+		time.Now().UnixNano(),
 		n,
 	)
 }
