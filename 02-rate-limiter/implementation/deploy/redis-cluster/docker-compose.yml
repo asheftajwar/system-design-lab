@@ -1,0 +1,109 @@
+
+services:
+  redis-7000:
+    image: redis:7.4
+    container_name: rate-limiter-redis-7000
+    command:
+      - redis-server
+      - --port
+      - "7000"
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --protected-mode
+      - "no"
+      - --cluster-announce-ip
+      - 172.30.0.10
+      - --cluster-announce-port
+      - "7000"
+      - --cluster-announce-bus-port
+      - "17000"
+    ports:
+      - "7000:7000"
+      - "17000:17000"
+    volumes:
+      - redis7000_data:/data
+    networks:
+      rate-limiter-cluster:
+        ipv4_address: 172.30.0.10
+
+  redis-7001:
+    image: redis:7.4
+    container_name: rate-limiter-redis-7001
+    command:
+      - redis-server
+      - --port
+      - "7001"
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --protected-mode
+      - "no"
+      - --cluster-announce-ip
+      - 172.30.0.11
+      - --cluster-announce-port
+      - "7001"
+      - --cluster-announce-bus-port
+      - "17001"
+    ports:
+      - "7001:7001"
+      - "17001:17001"
+    volumes:
+      - redis7001_data:/data
+    networks:
+      rate-limiter-cluster:
+        ipv4_address: 172.30.0.11
+
+  redis-7002:
+    image: redis:7.4
+    container_name: rate-limiter-redis-7002
+    command:
+      - redis-server
+      - --port
+      - "7002"
+      - --cluster-enabled
+      - "yes"
+      - --cluster-config-file
+      - nodes.conf
+      - --cluster-node-timeout
+      - "5000"
+      - --appendonly
+      - "yes"
+      - --protected-mode
+      - "no"
+      - --cluster-announce-ip
+      - 172.30.0.12
+      - --cluster-announce-port
+      - "7002"
+      - --cluster-announce-bus-port
+      - "17002"
+    ports:
+      - "7002:7002"
+      - "17002:17002"
+    volumes:
+      - redis7002_data:/data
+    networks:
+      rate-limiter-cluster:
+        ipv4_address: 172.30.0.12
+
+volumes:
+  redis7000_data:
+  redis7001_data:
+  redis7002_data:
+
+networks:
+  rate-limiter-cluster:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

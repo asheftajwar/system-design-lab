@@ -185,10 +185,10 @@ return {
 `
 
 type RedisSlidingWindow struct {
-	client *redis.Client
+	client redis.Scripter
 }
 
-func NewRedisSlidingWindow(client *redis.Client) *RedisSlidingWindow {
+func NewRedisSlidingWindow(client redis.Scripter) *RedisSlidingWindow {
 	return &RedisSlidingWindow{
 		client: client,
 	}
@@ -221,10 +221,12 @@ func (w *RedisSlidingWindow) Allow(
 
 	windowMS := windowSeconds * millisecondsPerSecond
 
-	zsetKey := key + ":swl:z"
-	costKey := key + ":swl:cost"
-	usageKey := key + ":swl:usage"
-	seqKey := key + ":swl:seq"
+	prefix := redisClusterKeyPrefix(key)
+
+	zsetKey := prefix + ":swl:z"
+	costKey := prefix + ":swl:cost"
+	usageKey := prefix + ":swl:usage"
+	seqKey := prefix + ":swl:seq"
 
 	result, err := redis.NewScript(slidingWindowScript).Run(
 		ctx,

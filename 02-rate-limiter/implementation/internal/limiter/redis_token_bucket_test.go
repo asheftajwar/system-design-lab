@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -455,7 +456,10 @@ func TestRedisTokenBucket_SetsExpiration(t *testing.T) {
 		t.Fatalf("allow request: %v", err)
 	}
 
-	ttl, err := client.PTTL(context.Background(), key).Result()
+	keys := tokenBucketKeysFor(key)
+
+	ttl, err := client.PTTL(context.Background(), keys.State).Result()
+
 	if err != nil {
 		t.Fatalf("read TTL: %v", err)
 	}
@@ -598,4 +602,56 @@ func TestRedisTokenBucket_RejectsOverflowConfiguration(t *testing.T) {
 			)
 		}
 	})
+}
+
+func TestTokenBucketKeysShareRedisClusterSlot(t *testing.T) {
+	keys := tokenBucketKeysFor("cluster-slot-test")
+
+	allKeys := []string{
+		keys.State,
+		keys.Reservations,
+		keys.ReservationData,
+		keys.TerminalIndex,
+	}
+
+	expectedSlot := redisClusterSlotForTest(allKeys[0])
+
+	for _, key := range allKeys[1:] {
+		if slot := redisClusterSlotForTest(key); slot != expectedSlot {
+			t.Fatalf(
+				"keys must share a Redis Cluster slot: %q has slot %d, expected %d",
+				key,
+				slot,
+				expectedSlot,
+			)
+		}
+	}
+}
+
+func redisClusterSlotForTest(key string) int {
+	hashKey := key
+
+	start := strings.IndexByte(key, '{')
+	if start >= 0 {
+		end := strings.IndexByte(key[start+1:], '}')
+		if end > 0 {
+			hashKey = key[start+1 : start+1+end]
+		}
+	}
+
+	var crc uint16
+
+	for _, b := range []byte(hashKey) {
+		crc ^= uint16(b) << 8
+
+		for i := 0; i < 8; i++ {
+			if crc&0x8000 != 0 {
+				crc = (crc << 1) ^ 0x1021
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+
+	return int(crc % 16384)
 }

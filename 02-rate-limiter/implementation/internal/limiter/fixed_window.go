@@ -80,10 +80,10 @@ return {1, limit - new_count, reset_ms}
 `)
 
 type RedisFixedWindow struct {
-	client *redis.Client
+	client redis.Scripter
 }
 
-func NewRedisFixedWindow(client *redis.Client) *RedisFixedWindow {
+func NewRedisFixedWindow(client redis.Scripter) *RedisFixedWindow {
 	return &RedisFixedWindow{
 		client: client,
 	}

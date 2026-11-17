@@ -18,7 +18,7 @@ func testKey(name string) string {
 	return fmt.Sprintf("test:fixed-window:%s:%d", name, n)
 }
 
-func newTestRedisFixedWindow(t *testing.T) *RedisFixedWindow {
+func newTestRedisFixedWindow(t *testing.T) (*RedisFixedWindow, *redis.Client) {
 	t.Helper()
 
 	client := redis.NewClient(&redis.Options{
@@ -37,12 +37,12 @@ func newTestRedisFixedWindow(t *testing.T) *RedisFixedWindow {
 		client.Close()
 	})
 
-	return NewRedisFixedWindow(client)
+	return NewRedisFixedWindow(client), client
 }
 
 func TestRedisFixedWindow_EnforcesLimit(t *testing.T) {
 	ctx := context.Background()
-	fixedWindow := newTestRedisFixedWindow(t)
+	fixedWindow, _ := newTestRedisFixedWindow(t)
 
 	key := testKey("enforces-limit")
 
@@ -101,7 +101,7 @@ func TestRedisFixedWindow_EnforcesLimit(t *testing.T) {
 
 func TestRedisFixedWindow_RequestCost(t *testing.T) {
 	ctx := context.Background()
-	fixedWindow := newTestRedisFixedWindow(t)
+	fixedWindow, _ := newTestRedisFixedWindow(t)
 
 	key := testKey("request-cost")
 
@@ -147,7 +147,7 @@ func TestRedisFixedWindow_RequestCost(t *testing.T) {
 
 func TestRedisFixedWindow_RejectedRequestDoesNotConsumeQuota(t *testing.T) {
 	ctx := context.Background()
-	fixedWindow := newTestRedisFixedWindow(t)
+	fixedWindow, _ := newTestRedisFixedWindow(t)
 
 	key := testKey("rejected-does-not-consume")
 
@@ -173,8 +173,6 @@ func TestRedisFixedWindow_RejectedRequestDoesNotConsumeQuota(t *testing.T) {
 		t.Fatalf("remaining = %d, want 0", decision.Remaining)
 	}
 
-	// The quota remains exhausted. This verifies that the rejected
-	// request did not mutate the counter into an invalid state.
 	decision, err = fixedWindow.Allow(ctx, key, 5, 10, 1)
 	if err != nil {
 		t.Fatalf("second rejected request: %v", err)
@@ -191,7 +189,7 @@ func TestRedisFixedWindow_RejectedRequestDoesNotConsumeQuota(t *testing.T) {
 
 func TestRedisFixedWindow_ResetsAtWindowBoundary(t *testing.T) {
 	ctx := context.Background()
-	fixedWindow := newTestRedisFixedWindow(t)
+	fixedWindow, _ := newTestRedisFixedWindow(t)
 
 	key := testKey("boundary")
 
@@ -217,7 +215,6 @@ func TestRedisFixedWindow_ResetsAtWindowBoundary(t *testing.T) {
 		t.Fatal("request should be rejected before window reset")
 	}
 
-	// Redis TIME is authoritative, so sleep until the next window.
 	time.Sleep(1200 * time.Millisecond)
 
 	decision, err = fixedWindow.Allow(ctx, key, 2, 1, 1)
@@ -236,7 +233,7 @@ func TestRedisFixedWindow_ResetsAtWindowBoundary(t *testing.T) {
 
 func TestRedisFixedWindow_TTLExpiresWithWindow(t *testing.T) {
 	ctx := context.Background()
-	fixedWindow := newTestRedisFixedWindow(t)
+	fixedWindow, client := newTestRedisFixedWindow(t)
 
 	key := testKey("ttl")
 
@@ -249,8 +246,7 @@ func TestRedisFixedWindow_TTLExpiresWithWindow(t *testing.T) {
 		t.Fatal("request should be allowed")
 	}
 
-	ttl, err := fixedWindow.client.TTL(ctx, key+":fw").Result()
-
+	ttl, err := client.TTL(ctx, key+":fw").Result()
 	if err != nil {
 		t.Fatalf("read ttl: %v", err)
 	}
@@ -266,7 +262,7 @@ func TestRedisFixedWindow_TTLExpiresWithWindow(t *testing.T) {
 
 func TestRedisFixedWindow_CostGreaterThanLimit(t *testing.T) {
 	ctx := context.Background()
-	fixedWindow := newTestRedisFixedWindow(t)
+	fixedWindow, _ := newTestRedisFixedWindow(t)
 
 	key := testKey("cost-too-large")
 
@@ -287,7 +283,6 @@ func TestRedisFixedWindow_CostGreaterThanLimit(t *testing.T) {
 		t.Fatalf("remaining = %d, want 5", decision.Remaining)
 	}
 
-	// Cost greater than limit must not create/consume the bucket.
 	decision, err = fixedWindow.Allow(ctx, key, 5, 10, 5)
 	if err != nil {
 		t.Fatalf("follow-up request: %v", err)
@@ -300,7 +295,7 @@ func TestRedisFixedWindow_CostGreaterThanLimit(t *testing.T) {
 
 func TestRedisFixedWindow_InvalidConfiguration(t *testing.T) {
 	ctx := context.Background()
-	fixedWindow := newTestRedisFixedWindow(t)
+	fixedWindow, _ := newTestRedisFixedWindow(t)
 
 	tests := []struct {
 		name          string
@@ -373,8 +368,8 @@ func TestRedisFixedWindow_InvalidConfiguration(t *testing.T) {
 func TestRedisFixedWindow_SharedInstances(t *testing.T) {
 	ctx := context.Background()
 
-	first := newTestRedisFixedWindow(t)
-	second := newTestRedisFixedWindow(t)
+	first, _ := newTestRedisFixedWindow(t)
+	second, _ := newTestRedisFixedWindow(t)
 
 	key := testKey("shared-instances")
 

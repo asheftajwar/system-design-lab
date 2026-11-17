@@ -3,9 +3,10 @@ package policy
 import (
 	"context"
 	"errors"
-	"testing"
 	"fmt"
 	"sync/atomic"
+	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -16,9 +17,11 @@ var slidingWindowEnforcerTestKeyCounter uint64
 
 func slidingWindowEnforcerTestKey(name string) string {
 	n := atomic.AddUint64(&slidingWindowEnforcerTestKeyCounter, 1)
+
 	return fmt.Sprintf(
-		"test:policy:sliding-window:%s:%d",
+		"test:policy:sliding-window:%s:%d:%d",
 		name,
+		time.Now().UnixNano(),
 		n,
 	)
 }
@@ -66,7 +69,7 @@ func TestSlidingWindowEnforcer_AllowsAndMapsDecision(t *testing.T) {
 
 	decision, err := enforcer.Allow(
 		ctx,
-		"test:policy:sliding-window:allows",
+		slidingWindowEnforcerTestKey("allows"),
 		policy,
 		3,
 	)
@@ -163,7 +166,6 @@ func TestSlidingWindowEnforcer_PreservesRequestCost(t *testing.T) {
 	}
 
 	key := slidingWindowEnforcerTestKey("cost")
-	
 
 	decision, err := enforcer.Allow(ctx, key, policy, 4)
 	if err != nil {

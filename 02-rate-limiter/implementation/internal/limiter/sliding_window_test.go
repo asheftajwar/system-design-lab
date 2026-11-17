@@ -451,3 +451,29 @@ func TestRedisSlidingWindow_InvalidConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisSlidingWindowKeysShareRedisClusterSlot(t *testing.T) {
+	key := "cluster-slot-test"
+
+	prefix := redisClusterKeyPrefix(key)
+
+	keys := []string{
+		prefix + ":swl:z",
+		prefix + ":swl:cost",
+		prefix + ":swl:usage",
+		prefix + ":swl:seq",
+	}
+
+	expectedSlot := redisClusterSlotForTest(keys[0])
+
+	for _, redisKey := range keys[1:] {
+		if slot := redisClusterSlotForTest(redisKey); slot != expectedSlot {
+			t.Fatalf(
+				"Redis Cluster slot mismatch: key %q has slot %d, want %d",
+				redisKey,
+				slot,
+				expectedSlot,
+			)
+		}
+	}
+}

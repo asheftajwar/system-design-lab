@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -16,9 +17,11 @@ var fixedWindowEnforcerTestKeyCounter uint64
 
 func fixedWindowEnforcerTestKey(name string) string {
 	n := atomic.AddUint64(&fixedWindowEnforcerTestKeyCounter, 1)
+
 	return fmt.Sprintf(
-		"test:policy:fixed-window:%s:%d",
+		"test:policy:fixed-window:%s:%d:%d",
 		name,
+		time.Now().UnixNano(),
 		n,
 	)
 }
